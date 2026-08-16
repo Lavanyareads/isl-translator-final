@@ -5,6 +5,7 @@ import numpy as np
 import os
 import time
 import textwrap
+from collections import deque, Counter
 from groq_helper import process_text
 import streamlit.components.v1 as components
 
@@ -389,10 +390,15 @@ def process_text(raw_text: str) -> dict:
 
         system_prompt = (
             "You are an Indian Sign Language (ISL) interpreter assistant. "
-            "You will receive a raw string of detected sign letters (possibly with spaces and punctuation). "
-            "Your tasks:\n"
-            "1. Clean and correct the raw letter sequence into proper English words/sentences.\n"
-            "2. Translate the cleaned English text into natural Marathi (Devanagari script).\n"
+            "You will receive raw ISL gloss — a sequence of detected sign letters/words "
+            "in the order they were signed, which is NOT the same as English word order. "
+            "ISL often signs Object/Topic first, and drops words like 'to', 'am', 'is', "
+            "'are', 'a', 'an', 'the' entirely. Your tasks:\n"
+            "1. Reorder the gloss into natural, grammatically correct English, inserting "
+            "whatever missing pronouns, articles, or 'to be'/'to' verbs ISL grammar leaves "
+            "out — without adding any new meaning. Example: gloss 'U MEET NICE' becomes "
+            "'Nice to meet you.'\n"
+            "2. Translate the corrected English text into natural Marathi (Devanagari script).\n"
             "Respond ONLY in this exact JSON format with no extra text:\n"
             '{"cleaned": "<English text>", "marathi": "<Marathi text>"}'
         )
@@ -485,6 +491,25 @@ def restore_punctuation(raw_text: str) -> str:
     except Exception:
         return _basic_capitalize(raw_text)
 
+# ---------- MARATHI TRANSLATION (Google Translate, via deep-translator) ----------
+def translate_to_marathi(text: str) -> str:
+    """
+    Translates English text to Marathi using Google Translate. This is
+    separate from Groq on purpose — Groq handles ISL gloss reordering
+    (grammar), Google Translate handles the actual language translation,
+    since a small LLM doing both jobs at once produced weak Marathi output.
+    Returns an empty string on failure rather than raising, so callers can
+    just skip showing a Marathi line if translation is unavailable.
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    try:
+        from deep_translator import GoogleTranslator
+        return GoogleTranslator(source="en", target="mr").translate(text)
+    except Exception:
+        return ""
+
 # ---------- HEADER ----------
 theme_icon = "🌙" if st.session_state.dark_mode else "☀️"
 mode_label = "🎓 Learning Mode" if st.session_state.mode == "learning" else "💬 Conversation Mode"
@@ -552,6 +577,18 @@ def get_hands():
 hands, mp_hands, mp_draw = get_hands()
 
 HOLD_THRESHOLD = 20  # consecutive stable-prediction frames needed to register a letter
+SMOOTH_WINDOW = 5    # frames considered when smoothing out single-frame prediction noise
+
+def smoothed_prediction(buffer: deque, raw_prediction: str) -> str:
+    """
+    Appends the latest raw model prediction to a small rolling buffer and
+    returns the majority-vote letter across that window instead of trusting
+    a single frame. This absorbs the kind of frame-to-frame flicker that
+    shows up under harsher/inconsistent lighting than the model was trained
+    on, without needing to retrain anything.
+    """
+    buffer.append(raw_prediction)
+    return Counter(buffer).most_common(1)[0][0]
 
 # ---------- SIDEBAR ----------
 with st.sidebar:
@@ -598,13 +635,15 @@ with st.sidebar:
 
         st.markdown("<div class='sidebar-section'>Actions</div>", unsafe_allow_html=True)
 
-        if st.button("⚡  Translate with Groq"):
+        if st.button("⚡  Translate"):
             full = st.session_state.sentence + st.session_state.current_word
             if full.strip():
-                with st.spinner("Calling Groq…"):
+                with st.spinner("Correcting grammar…"):
                     result = process_text(full)
-                st.session_state.cleaned = result.get("cleaned", "")
-                st.session_state.marathi = result.get("marathi", "")
+                cleaned = result.get("cleaned", "")
+                st.session_state.cleaned = cleaned
+                with st.spinner("Translating to Marathi…"):
+                    st.session_state.marathi = translate_to_marathi(cleaned) or result.get("marathi", "")
             else:
                 st.warning("Nothing to translate yet.")
         st.markdown("<div class='sidebar-section'>Voice Output</div>", unsafe_allow_html=True)
@@ -765,6 +804,7 @@ if st.session_state.mode == "learning":
             else:
                 # Show initial idle UI before first frame
                 update_ui("·", 0, 0, running=True)
+                pred_buffer = deque(maxlen=SMOOTH_WINDOW)
 
                 while run:
                     ret, frame = cap.read()
@@ -787,7 +827,8 @@ if st.session_state.mode == "learning":
                                 for lm in hand_landmarks.landmark:
                                     landmarks.extend([lm.x, lm.y, lm.z])
                                 landmarks  = np.array(landmarks).reshape(1, -1)
-                                prediction = str(model.predict(landmarks)[0]).upper()
+                                raw_prediction = str(model.predict(landmarks)[0]).upper()
+                                prediction = smoothed_prediction(pred_buffer, raw_prediction)
 
                                 if prediction == st.session_state.prev_pred:
                                     st.session_state.count += 1
@@ -830,6 +871,7 @@ if st.session_state.mode == "learning":
                         st.session_state.prev_pred  = None
                         st.session_state.last_added = ""
                         hold_pct = 0
+                        pred_buffer.clear()
 
                     FRAME_WINDOW.image(frame, channels="BGR", use_container_width=True)
                     update_ui(detected_letter, hold_pct, conf, running=True)
@@ -874,6 +916,11 @@ else:
     if "last_you_message" not in st.session_state:
         st.session_state.last_you_message = ""
 
+    # Same labels as Learning Mode's SPECIAL_SIGNS — the classifier still
+    # recognizes these poses (it's the same model), Conversation Mode just
+    # discards them instead of treating them as commands or letters.
+    CONV_IGNORED_SIGNS = {"SPACE", "COMMA", "FULLSTOP"}
+
     conv_feed, conv_chat = st.columns([2, 1], gap="small")
 
     with conv_feed:
@@ -895,12 +942,16 @@ else:
             )
             send_clicked = st.form_submit_button("Send ➜")
         if send_clicked and typed_msg.strip():
+            msg_text = typed_msg.strip()
+            with st.spinner("Translating to Marathi…"):
+                msg_marathi = translate_to_marathi(msg_text)
             st.session_state.chat_history.append({
                 "sender": "you",
-                "text": typed_msg.strip(),
+                "text": msg_text,
+                "marathi": msg_marathi,
                 "time": time.strftime("%H:%M"),
             })
-            st.session_state.last_you_message = typed_msg.strip()
+            st.session_state.last_you_message = msg_text
 
     def render_conv_chat():
         history = st.session_state.chat_history
@@ -912,17 +963,25 @@ else:
         else:
             bubbles = ""
             for msg in history:
-                is_you = msg["sender"] == "you"
-                align  = "flex-end" if is_you else "flex-start"
-                bg     = T["accent"] if is_you else T["bg_card"]
-                fg     = "#ffffff" if is_you else T["text_primary"]
-                label  = "You" if is_you else "ISL"
+                is_you   = msg["sender"] == "you"
+                align    = "flex-end" if is_you else "flex-start"
+                bg       = T["accent"] if is_you else T["bg_card"]
+                fg       = "#ffffff" if is_you else T["text_primary"]
+                fg_mr    = "#ffffffcc" if is_you else T["text_secondary"]
+                label    = "You" if is_you else "ISL"
+                marathi  = (msg.get("marathi") or "").strip()
+                marathi_html = (
+                    f'<div style="font-family:\'Noto Sans Devanagari\',sans-serif;'
+                    f'font-size:12px;color:{fg_mr};margin-top:4px;border-top:0.5px solid '
+                    f'{"#ffffff33" if is_you else T["border"]};padding-top:4px;">{marathi}</div>'
+                    if marathi else ""
+                )
                 bubbles += (
                     f'<div style="display:flex;flex-direction:column;align-items:{align};margin-bottom:10px;">'
                     f'<div style="font-size:10px;color:{T["text_muted"]};margin-bottom:3px;">{label} · {msg["time"]}</div>'
                     f'<div style="background:{bg};color:{fg};padding:8px 13px;border-radius:12px;'
                     f'max-width:88%;font-size:13px;line-height:1.5;border:0.5px solid {T["border"]};">'
-                    f'{msg["text"]}</div></div>'
+                    f'{msg["text"]}{marathi_html}</div></div>'
                 )
         _html(chat_box, f"""
             <div style="background:{T['bg_surface']};border-radius:12px;border:0.5px solid {T['border']};
@@ -969,6 +1028,31 @@ else:
               (word ends at {word_pause_sec:.1f}s · message sends at {message_pause_sec:.1f}s)
             </div>""")
 
+    def finalize_conv_message(raw_gloss: str) -> dict:
+        """
+        Turns raw ISL gloss into a real sentence + Marathi translation.
+        Groq does the reordering/pronoun-insertion work (see groq_helper.py's
+        prompt); the HF punctuation model is only a fallback for when Groq is
+        unavailable (no API key, no internet), since it can add punctuation
+        but can't reorder words or insert missing grammar words. Marathi
+        comes from Google Translate, same as Learning Mode.
+        """
+        cleaned = ""
+        try:
+            result = process_text(raw_gloss)
+            candidate = (result or {}).get("cleaned", "").strip()
+            # process_text() returns the raw text back unchanged when
+            # GROQ_API_KEY is missing/invalid — treat that as "Groq didn't
+            # actually run" and fall back to HF punctuation-only restoration.
+            if candidate and candidate.lower() != raw_gloss.lower():
+                cleaned = candidate
+        except Exception:
+            pass
+        if not cleaned:
+            cleaned = restore_punctuation(raw_gloss)
+        marathi = translate_to_marathi(cleaned)
+        return {"cleaned": cleaned, "marathi": marathi}
+
     render_conv_chat()
     render_signer_display()
 
@@ -985,6 +1069,7 @@ else:
                     st.session_state.conv_last_hand_time = time.time()
 
                 render_conv_status("·", st.session_state.conv_current_word, 0.0)
+                conv_pred_buffer = deque(maxlen=SMOOTH_WINDOW)
 
                 while run:
                     ret, frame = cap.read()
@@ -1010,7 +1095,8 @@ else:
                                 for lm in hand_landmarks.landmark:
                                     landmarks.extend([lm.x, lm.y, lm.z])
                                 landmarks  = np.array(landmarks).reshape(1, -1)
-                                prediction = str(model.predict(landmarks)[0]).upper()
+                                raw_prediction = str(model.predict(landmarks)[0]).upper()
+                                prediction = smoothed_prediction(conv_pred_buffer, raw_prediction)
 
                                 if prediction == st.session_state.conv_prev_pred:
                                     st.session_state.conv_count += 1
@@ -1023,10 +1109,14 @@ else:
                                 if st.session_state.conv_count > HOLD_THRESHOLD:
                                     if prediction != st.session_state.conv_last_added:
                                         st.session_state.conv_last_added = prediction
-                                        # Conversation mode has no special signs —
-                                        # every registered letter just extends the
-                                        # current word.
-                                        st.session_state.conv_current_word += prediction
+                                        # Conversation Mode doesn't use SPACE/COMMA/
+                                        # FULLSTOP signs — if the classifier ever
+                                        # predicts one of them (mid-transition, or
+                                        # out of Learning Mode habit), ignore it
+                                        # instead of appending the literal word
+                                        # "SPACE"/"COMMA"/"FULLSTOP" into the gloss.
+                                        if prediction not in CONV_IGNORED_SIGNS:
+                                            st.session_state.conv_current_word += prediction
 
                                 mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
@@ -1038,6 +1128,7 @@ else:
                         st.session_state.conv_count      = 0
                         st.session_state.conv_prev_pred   = None
                         st.session_state.conv_last_added  = ""
+                        conv_pred_buffer.clear()
                         seconds_since_hand = now - st.session_state.conv_last_hand_time
 
                         # Pause long enough -> end the current word.
@@ -1053,11 +1144,12 @@ else:
                                 and not st.session_state.conv_message_sent
                                 and st.session_state.conv_sentence_buffer.strip()):
                             raw = st.session_state.conv_sentence_buffer.strip()
-                            with st.spinner("Punctuating message…"):
-                                punctuated = restore_punctuation(raw)
+                            with st.spinner("Correcting grammar & translating…"):
+                                finalized = finalize_conv_message(raw)
                             st.session_state.chat_history.append({
                                 "sender": "isl",
-                                "text": punctuated,
+                                "text": finalized["cleaned"],
+                                "marathi": finalized["marathi"],
                                 "time": time.strftime("%H:%M"),
                             })
                             st.session_state.conv_sentence_buffer = ""

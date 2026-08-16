@@ -9,29 +9,41 @@ client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def process_text(text: str) -> dict:
     """
-    Takes raw ISL-translated text, corrects grammar, and translates to Marathi.
-    Returns a dict with keys: 'cleaned' and 'marathi'.
+    Takes raw ISL gloss (signed word order, missing function words) and
+    reorders it into natural English. Marathi translation is handled
+    separately by Google Translate (see translate_to_marathi in app.py) —
+    Groq's job here is just the grammar/reordering, which is what it's
+    actually good at.
+    Returns a dict with key 'cleaned' (and 'marathi' kept empty for
+    backwards compatibility with older callers).
     """
     if not text.strip():
         return {"cleaned": "", "marathi": ""}
 
     prompt = f"""
-You are a strict translator.
+You are an expert Indian Sign Language (ISL) interpreter.
 
-Step 1: Correct the English sentence.
-Step 2: Translate it into simple Marathi.
+The input below is raw ISL gloss — the words as they were signed, in ISL
+word order. ISL grammar is NOT the same as English word order: signs are
+often produced Object/Topic first, pronouns can come in a different position
+than in English, and words like "to", "am", "is", "are", "a", "an", "the"
+are usually dropped entirely because ISL doesn't sign them.
+
+Reorder the words into natural, grammatically correct English word order,
+and insert whatever missing pronouns, articles, or "to be"/"to" verbs ISL
+grammar leaves out — so the result reads exactly the way a fluent English
+speaker would actually say it. Do NOT add any new meaning, only fix grammar
+and word order.
+   Example: gloss "U MEET NICE" (signed as: You, Meet, Nice) becomes
+   "Nice to meet you." — note both the reordering and the inserted word "to".
 
 STRICT RULES:
-- Only ONE Marathi sentence
-- Keep Marathi natural and short
-- No brackets, no explanations, no alternatives
-- Do NOT add extra words
+- Output ONLY the corrected English sentence — no labels, no quotes, no
+  explanation, no alternatives.
+- Do NOT add extra information beyond what was signed — only reorder/insert
+  grammar words.
 
-OUTPUT FORMAT (exactly):
-Cleaned: <correct sentence>
-Marathi: <simple Marathi sentence>
-
-Sentence: {text}
+ISL gloss input: {text}
 """
 
     response = client.chat.completions.create(
@@ -39,15 +51,10 @@ Sentence: {text}
         messages=[{"role": "user", "content": prompt}]
     )
 
-    raw = response.choices[0].message.content.strip()
+    cleaned = response.choices[0].message.content.strip()
+    # Strip stray quotes/labels if the model adds them despite instructions
+    cleaned = cleaned.strip('"').strip()
+    if cleaned.lower().startswith("cleaned:"):
+        cleaned = cleaned.split(":", 1)[1].strip()
 
-    cleaned = ""
-    marathi = ""
-
-    for line in raw.splitlines():
-        if line.startswith("Cleaned:"):
-            cleaned = line.replace("Cleaned:", "").strip()
-        elif line.startswith("Marathi:"):
-            marathi = line.replace("Marathi:", "").strip()
-
-    return {"cleaned": cleaned, "marathi": marathi}
+    return {"cleaned": cleaned, "marathi": ""}
