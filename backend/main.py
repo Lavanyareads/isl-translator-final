@@ -69,6 +69,11 @@ class StaticRecordingRequest(BaseModel):
     frames: list[dict]
 
 
+class DynamicSequenceRequest(BaseModel):
+    label: str
+    frames: list[dict]
+
+
 def get_browser_static_model():
     """Reload after retraining without requiring an API-server restart."""
     global browser_static_model, browser_static_model_mtime
@@ -182,6 +187,31 @@ def save_static_recording(payload: StaticRecordingRequest):
     filename.write_text(json.dumps({
         "schemaVersion": 1,
         "kind": "static",
+        "label": label,
+        "capturedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "frames": payload.frames,
+    }), encoding="utf-8")
+    return {"saved": len(payload.frames), "path": str(filename.relative_to(ROOT))}
+
+
+@app.post("/api/datasets/dynamic")
+def save_dynamic_sequence(payload: DynamicSequenceRequest):
+    """Persists one browser-landmark sequence for later LSTM training."""
+    label = payload.label.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_]+", label):
+        raise HTTPException(422, "Label may contain only A-Z, 0-9, and underscores.")
+    if not 2 <= len(payload.frames) <= 300:
+        raise HTTPException(422, "A dynamic sequence must contain 2 to 300 frames.")
+    for frame in payload.frames:
+        if len(frame.get("leftHand", [])) != 63 or len(frame.get("rightHand", [])) != 63:
+            raise HTTPException(422, "Every frame must contain two 63-value hand vectors.")
+
+    sequence = ROOT / "dataset" / "dynamic" / label / f"sequence_{time.time_ns()}"
+    sequence.mkdir(parents=True, exist_ok=False)
+    filename = sequence / "landmarks.json"
+    filename.write_text(json.dumps({
+        "schemaVersion": 1,
+        "kind": "dynamic",
         "label": label,
         "capturedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "frames": payload.frames,

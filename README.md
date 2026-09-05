@@ -170,6 +170,31 @@ python src/train_static.py
 
 The model is saved to `models/browser_static_model.pkl`. The API detects that file automatically and uses it before falling back to the legacy model. Static word signs listed in `frontend/src/config/signs.js` commit to the sentence builder after a short consensus; letters continue building a fingerspelled word.
 
+### Dynamic LSTM prototype
+
+Collect one motion sequence at a time with the separate dynamic collector:
+
+```bash
+python src/collect_dynamic.py WAVE --frames 30
+```
+
+Each run saves `dataset/dynamic/WAVE/sequence_<ID>/landmarks.json`. Train the LSTM checkpoint after collecting at least two labels and two sequences per label:
+
+```bash
+python src/train_dynamic.py --frames 30 --epochs 40
+```
+
+This produces `models/dynamic_lstm.pt` for dataset and model validation. It is not connected to the live application yet; export to ONNX and browser-worker inference follow after validating the larger Monday dataset.
+
+Export trained models to browser-ready ONNX artifacts with:
+
+```bash
+python src/export_static_onnx.py
+python src/export_dynamic_onnx.py
+```
+
+The commands write models and their label lists under `frontend/public/models/`. Install the exporter dependencies once with `python -m pip install -r requirements.txt` before exporting.
+
 ### Standalone OpenCV version (no browser, for quick debugging)
 
 ```bash
