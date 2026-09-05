@@ -83,7 +83,8 @@ async function predictDynamic(frame) {
   features[127] = Number(frame.rightPresent)
   dynamicHistory.push(features)
   if (dynamicHistory.length > dynamicFrames) dynamicHistory.shift()
-  if (dynamicHistory.length < dynamicFrames || dynamicHistory.length % 5 !== 0) return null
+  frame.dynamicWindowReady = dynamicHistory.length >= dynamicFrames
+  if (!frame.dynamicWindowReady || dynamicHistory.length % 5 !== 0) return null
   const sequence = new Float32Array(dynamicFrames * 128)
   dynamicHistory.forEach((item, index) => sequence.set(item, index * 128))
   const input = new ort.Tensor('float32', sequence, [1, dynamicFrames, 128])

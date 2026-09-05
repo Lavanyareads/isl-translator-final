@@ -148,22 +148,23 @@ function App() {
     if (!frame.leftPresent && !frame.rightPresent) return handleNoHand()
     const c = stateRef.current
     c.lastHand = Date.now(); c.wordCommitted = false; c.messageSent = false
-    if (c.mode === 'conversation' && dynamicEnabledRef.current) {
-      // Dynamic mode is exclusive. Never let a static classifier interpret
-      // intermediate movement frames as letters while the LSTM buffer fills.
-      if (frame.dynamicPrediction) {
+    if (c.mode === 'conversation' && dynamicEnabledRef.current && frame.dynamicPrediction) {
+      // Both models run on every frame. Fusion gives a confident temporal
+      // prediction priority only after its 30-frame window is warm; otherwise
+      // static-sign predictions continue as the normal fallback.
+      if (frame.dynamicWindowReady && frame.dynamicPrediction.confidence >= 80) {
         const dynamic = dynamicRecognizer.current
         const label = frame.dynamicPrediction.label
         dynamic.buffer = [...dynamic.buffer, label].slice(-2)
         const stable = dynamic.buffer.length === 2 && dynamic.buffer.every(item => item === label)
         setPrediction(label); setConfidence(frame.dynamicPrediction.confidence)
-        if (stable && frame.dynamicPrediction.confidence >= 80 && dynamic.lastAdded !== label && label !== 'IDLE' && label !== 'NO_SIGN') {
+        if (stable && dynamic.lastAdded !== label && label !== 'IDLE' && label !== 'NO_SIGN') {
           dynamic.lastAdded = label
           setSentence(value => value + label + ' ')
           setHold(100); setLastAdded(label)
         }
+        return
       }
-      return
     }
     if (classifierInFlight.current || performance.now() - lastClassificationAt.current < 180) return
     classifierInFlight.current = true; lastClassificationAt.current = performance.now()
@@ -240,14 +241,14 @@ function App() {
     dynamicRecognizer.current = { buffer: [], lastAdded: '' }
     setDynamicEnabled(next)
     setPrediction('·'); setConfidence(0); setHold(0); setLastAdded('')
-    setNotice(next ? 'Dynamic LSTM is active. Static letters are disabled; wait for the 30-frame buffer, then sign.' : 'Static sign classifier is active.')
+    setNotice(next ? 'Dynamic assist is active. Static and dynamic models run together; confident sequence predictions take priority.' : 'Static sign classifier is active.')
   }
   const elapsed = running && mode === 'conversation' ? ((Date.now() - stateRef.current.lastHand) / 1000).toFixed(1) : '0.0'
 
   return <div className="app">
     <header><div className="brand"><span className="logo">🤟</span><div><h1>S-स्पर्श</h1><p>Indian Sign Language · Real-time AI Translation</p></div></div><div className="pills"><span className="pill live">● {mode === 'learning' ? 'Learning Mode' : 'Conversation Mode'}</span><span className="pill">MediaPipe · {staticReady ? 'Local ONNX' : 'Groq'}</span></div></header>
     <aside><label className="section">Mode</label><button className={mode === 'learning' ? 'selected' : ''} onClick={() => switchMode('learning')}>🎓 Learning Mode</button><button className={mode === 'conversation' ? 'selected' : ''} onClick={() => switchMode('conversation')}>💬 Conversation Mode</button><p className="hint">{mode === 'learning' ? 'Use SPACE, COMMA and FULLSTOP signs to build your sentence.' : 'Pause between words. A longer pause sends the signed message.'}</p><label className="section">Display</label><button onClick={() => setDark(!dark)}>{dark ? '☀️ Light mode' : '🌙 Dark mode'}</button><label className="section">Camera</label><button className={running ? 'danger' : 'primary'} onClick={running ? stopCamera : startCamera}>{running ? '■ Stop camera' : '▶ Start camera'}</button>
-    {mode === 'learning' ? <><label className="section">Actions</label><button className="primary" onClick={translate}>⚡ Translate</button><label className="section">Voice output</label><button onClick={() => speak(output.cleaned, 'en-US')}>🔊 Speak English</button><button onClick={() => speak(output.marathi, 'mr-IN')}>🔊 मराठी ऐका</button><button className="danger" onClick={resetCapture}>✕ Clear session</button></> : <><label className="section">Dynamic signs</label><button disabled={!dynamicReady} className={dynamicEnabled ? 'selected' : ''} onClick={toggleDynamicMode}>{dynamicReady ? `${dynamicEnabled ? '✓ Dynamic LSTM active' : '○ Enable Dynamic LSTM'}` : 'Dynamic LSTM not exported'}</button><label className="section">Timing</label><label className="range">Word pause: {wordPause.toFixed(1)}s<input type="range" min="0.5" max="3" step="0.1" value={wordPause} onChange={e => setWordPause(+e.target.value)} /></label><label className="range">Message pause: {messagePause.toFixed(1)}s<input type="range" min="3" max="10" step="0.5" value={messagePause} onChange={e => setMessagePause(+e.target.value)} /></label><button className="danger" onClick={() => { setChat([]); resetCapture() }}>🗑 Clear chat</button></>}</aside>
+    {mode === 'learning' ? <><label className="section">Actions</label><button className="primary" onClick={translate}>⚡ Translate</button><label className="section">Voice output</label><button onClick={() => speak(output.cleaned, 'en-US')}>🔊 Speak English</button><button onClick={() => speak(output.marathi, 'mr-IN')}>🔊 मराठी ऐका</button><button className="danger" onClick={resetCapture}>✕ Clear session</button></> : <><label className="section">Dynamic signs</label><button disabled={!dynamicReady} className={dynamicEnabled ? 'selected' : ''} onClick={toggleDynamicMode}>{dynamicReady ? `${dynamicEnabled ? '✓ Dynamic assist active' : '○ Enable Dynamic assist'}` : 'Dynamic LSTM not exported'}</button><p className="hint">Static classifier stays active. A confident 30-frame LSTM result takes priority for motion signs.</p><label className="section">Timing</label><label className="range">Word pause: {wordPause.toFixed(1)}s<input type="range" min="0.5" max="3" step="0.1" value={wordPause} onChange={e => setWordPause(+e.target.value)} /></label><label className="range">Message pause: {messagePause.toFixed(1)}s<input type="range" min="3" max="10" step="0.5" value={messagePause} onChange={e => setMessagePause(+e.target.value)} /></label><button className="danger" onClick={() => { setChat([]); resetCapture() }}>🗑 Clear chat</button></>}</aside>
     <main>{notice && <div className="notice">{notice}</div>}<section className="feed"><div className="camera"><video ref={videoRef} className={running ? '' : 'camera-video-hidden'} muted playsInline /><canvas ref={overlayRef} className={running ? 'hand-overlay' : 'camera-video-hidden'} />{!running && <div className="placeholder"><b>{mode === 'learning' ? '🤟' : '💬'}</b><span>Start the camera to begin</span></div>}<i className="corner one"/><i className="corner two"/><i className="corner three"/><i className="corner four"/></div>{mode === 'learning' ? <Learning sentence={sentence} word={currentWord} prediction={prediction} hold={hold} confidence={confidence} lastAdded={lastAdded} output={output} stats={stats} /> : <Conversation chat={chat} reply={reply} setReply={setReply} sendReply={sendReply} lastReply={lastReply} prediction={prediction} word={currentWord} elapsed={elapsed} wordPause={wordPause} messagePause={messagePause} />}</section></main>
   </div>
 }
