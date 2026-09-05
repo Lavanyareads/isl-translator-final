@@ -19,7 +19,7 @@ def main() -> None:
         raise FileNotFoundError(f"Dynamic checkpoint not found: {args.input}. Run train_dynamic.py first.")
 
     try:
-        checkpoint = torch.load(args.input, map_location="cpu", weights_only=True)
+        checkpoint = torch.load(args.input, map_location="cpu", weights_only=False)
     except TypeError:  # PyTorch before the weights_only argument
         checkpoint = torch.load(args.input, map_location="cpu")
     model = DynamicLSTM(len(checkpoint["classes"]), checkpoint.get("hidden_size", 128))
