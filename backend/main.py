@@ -6,6 +6,9 @@ existing scikit-learn model can continue to run in Python.
 from __future__ import annotations
 
 import os
+import json
+import re
+import time
 from pathlib import Path
 
 import cv2
@@ -59,6 +62,11 @@ class LandmarkRequest(BaseModel):
 class BrowserFeatureRequest(BaseModel):
     """Two normalized hand vectors plus left/right presence masks."""
     features: list[float]
+
+
+class StaticRecordingRequest(BaseModel):
+    label: str
+    frames: list[dict]
 
 
 def get_browser_static_model():
@@ -154,6 +162,31 @@ def classify_browser_static(payload: BrowserFeatureRequest):
     if hasattr(classifier, "predict_proba"):
         confidence = float(np.max(classifier.predict_proba(features)[0]))
     return {"prediction": prediction, "confidence": round(confidence * 100), "source": "browser-static"}
+
+
+@app.post("/api/datasets/static")
+def save_static_recording(payload: StaticRecordingRequest):
+    """Persists a browser-landmark recording from the standalone collector."""
+    label = payload.label.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_]+", label):
+        raise HTTPException(422, "Label may contain only A-Z, 0-9, and underscores.")
+    if not 1 <= len(payload.frames) <= 2_000:
+        raise HTTPException(422, "A static recording must contain 1 to 2,000 frames.")
+    for frame in payload.frames:
+        if len(frame.get("leftHand", [])) != 63 or len(frame.get("rightHand", [])) != 63:
+            raise HTTPException(422, "Every frame must contain two 63-value hand vectors.")
+
+    destination = ROOT / "dataset" / "static" / label
+    destination.mkdir(parents=True, exist_ok=True)
+    filename = destination / f"recording_{time.time_ns()}.json"
+    filename.write_text(json.dumps({
+        "schemaVersion": 1,
+        "kind": "static",
+        "label": label,
+        "capturedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "frames": payload.frames,
+    }), encoding="utf-8")
+    return {"saved": len(payload.frames), "path": str(filename.relative_to(ROOT))}
 
 
 @app.post("/api/translate")

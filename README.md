@@ -154,6 +154,14 @@ dataset/
 
 Each static JSON recording contains browser-normalized `leftHand` / `rightHand` vectors and presence masks. The main translator UI has no data-collection controls. Dynamic sequences are reserved for the LSTM phase and are not trained yet.
 
+Start a standalone, browser-compatible static collection session from the VS Code terminal (with Vite and FastAPI already running):
+
+```bash
+python src/collect_static.py A --samples 200
+```
+
+This opens a separate collection page and saves its result directly to `dataset/static/A/`. Repeat it as separate sessions for each sign and condition. `--samples` captures landmark frames; it is not a model-training option.
+
 Train the static browser-landmark model from the VS Code terminal with:
 
 ```bash
