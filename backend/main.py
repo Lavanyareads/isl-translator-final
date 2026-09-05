@@ -35,6 +35,10 @@ try:
 except Exception as exc:  # The UI can still start and explain the issue.
     model_error = str(exc)
 
+BROWSER_STATIC_MODEL_PATH = ROOT / "models" / "browser_static_model.pkl"
+browser_static_model = None
+browser_static_model_mtime = None
+
 hands = mp.solutions.hands.Hands(
     static_image_mode=False,
     max_num_hands=2,
@@ -50,6 +54,23 @@ class TextRequest(BaseModel):
 class LandmarkRequest(BaseModel):
     """One 21-point hand flattened as x/y/z values from browser MediaPipe."""
     landmarks: list[float]
+
+
+class BrowserFeatureRequest(BaseModel):
+    """Two normalized hand vectors plus left/right presence masks."""
+    features: list[float]
+
+
+def get_browser_static_model():
+    """Reload after retraining without requiring an API-server restart."""
+    global browser_static_model, browser_static_model_mtime
+    if not BROWSER_STATIC_MODEL_PATH.exists():
+        return None
+    mtime = BROWSER_STATIC_MODEL_PATH.stat().st_mtime
+    if browser_static_model is None or browser_static_model_mtime != mtime:
+        browser_static_model = joblib.load(BROWSER_STATIC_MODEL_PATH)
+        browser_static_model_mtime = mtime
+    return browser_static_model
 
 
 def translate_to_marathi(text: str) -> str:
@@ -118,6 +139,21 @@ def classify_landmarks(payload: LandmarkRequest):
     if hasattr(model, "predict_proba"):
         confidence = float(np.max(model.predict_proba(features)[0]))
     return {"prediction": prediction, "confidence": round(confidence * 100)}
+
+
+@app.post("/api/classify-browser-static")
+def classify_browser_static(payload: BrowserFeatureRequest):
+    if len(payload.features) != 128:
+        raise HTTPException(422, "Expected 128 normalized browser-landmark features.")
+    classifier = get_browser_static_model()
+    if classifier is None:
+        raise HTTPException(503, "Browser static model not trained yet.")
+    features = np.asarray(payload.features, dtype=np.float32).reshape(1, -1)
+    prediction = str(classifier.predict(features)[0]).upper()
+    confidence = 0.0
+    if hasattr(classifier, "predict_proba"):
+        confidence = float(np.max(classifier.predict_proba(features)[0]))
+    return {"prediction": prediction, "confidence": round(confidence * 100), "source": "browser-static"}
 
 
 @app.post("/api/translate")
