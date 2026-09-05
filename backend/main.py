@@ -47,6 +47,11 @@ class TextRequest(BaseModel):
     text: str
 
 
+class LandmarkRequest(BaseModel):
+    """One 21-point hand flattened as x/y/z values from browser MediaPipe."""
+    landmarks: list[float]
+
+
 def translate_to_marathi(text: str) -> str:
     if not text.strip():
         return ""
@@ -98,6 +103,21 @@ async def predict(frame: UploadFile = File(...)):
     if hasattr(model, "predict_proba"):
         confidence = float(np.max(model.predict_proba(features)[0]))
     return {"handDetected": True, "prediction": prediction, "confidence": round(confidence * 100)}
+
+
+@app.post("/api/classify-landmarks")
+def classify_landmarks(payload: LandmarkRequest):
+    """Compatibility bridge for the existing classifier; no camera frame leaves the browser."""
+    if model is None:
+        raise HTTPException(503, f"Model is unavailable: {model_error}")
+    if len(payload.landmarks) != 63:
+        raise HTTPException(422, "Expected exactly 63 landmark values.")
+    features = np.asarray(payload.landmarks, dtype=np.float32).reshape(1, -1)
+    prediction = str(model.predict(features)[0]).upper()
+    confidence = 0.0
+    if hasattr(model, "predict_proba"):
+        confidence = float(np.max(model.predict_proba(features)[0]))
+    return {"prediction": prediction, "confidence": round(confidence * 100)}
 
 
 @app.post("/api/translate")

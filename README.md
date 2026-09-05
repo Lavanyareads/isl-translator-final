@@ -1,6 +1,6 @@
 # S-स्पर्श — Indian Sign Language (ISL) Translator
 
-A real-time ISL-to-text translator that reads hand signs through your webcam, converts them into English words/sentences, and translates them into Marathi using Groq's LLM API. The interface is now built with **React**, while a small **FastAPI** service runs MediaPipe and the existing scikit-learn classifier.
+A real-time ISL-to-text translator that reads hand signs through your webcam, converts them into English words/sentences, and translates them into Marathi using Groq's LLM API. The interface is built with **React**. MediaPipe Hand Landmarker runs locally in the browser (inside a Web Worker), while FastAPI retains the existing scikit-learn classifier and translation endpoints.
 
 ## Features
 
@@ -16,7 +16,9 @@ A real-time ISL-to-text translator that reads hand signs through your webcam, co
 ```
 .
 ├── frontend/           # React + Vite web app
-├── backend/main.py     # FastAPI server for recognition and translation
+├── backend/main.py     # FastAPI server for legacy classification and translation
+├── frontend/src/lib/   # Browser landmark pipeline + normalization/buffer
+├── frontend/src/workers/ # Worker-hosted MediaPipe Hand Landmarker
 ├── app.py              # Legacy Streamlit implementation (kept for reference)
 ├── groq_helper.py       # Groq API wrapper for cleanup + Marathi translation
 ├── collect_data.py      # Records hand-landmark samples for a sign into data/<sign>.csv
@@ -124,6 +126,12 @@ Open the local URL printed by Vite (normally `http://localhost:5173`). The React
 - Clear the session
 
 The Vite development server forwards `/api` requests to `http://127.0.0.1:8000`. For production, build the frontend with `npm run build` and serve `frontend/dist` from your preferred static-file host; configure it to forward `/api` to FastAPI.
+
+## Browser landmark pipeline
+
+Camera frames stay in the browser. A dedicated Web Worker samples at 20 FPS (maximum 640px on either side) and runs MediaPipe Hand Landmarker locally. Each output has fixed-size `leftHand` and `rightHand` vectors of 63 normalized values; absent hands are zero-filled, with `leftPresent` / `rightPresent` masks and MediaPipe handedness metadata. Coordinates are wrist-relative and scale-normalized using the wrist-to-middle-finger-MCP distance. A 30-frame temporal buffer is kept separately from React state for a future LSTM.
+
+The legacy classifier remains available. It receives only one selected hand's 63 landmark values through `/api/classify-landmarks`; raw camera frames are no longer sent to the backend for MediaPipe detection.
 
 ### Standalone OpenCV version (no browser, for quick debugging)
 

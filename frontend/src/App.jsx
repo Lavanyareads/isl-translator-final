@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { BrowserHandLandmarker } from './lib/browserHandLandmarker'
 
 const API = '/api'
 const SPECIAL = { SPACE: ' ', COMMA: ',', FULLSTOP: '.' }
@@ -15,8 +16,9 @@ function speak(text, lang) {
 
 function App() {
   const videoRef = useRef(null)
-  const canvasRef = useRef(null)
-  const loopRef = useRef(null)
+  const landmarkerRef = useRef(null)
+  const classifierInFlight = useRef(false)
+  const lastClassificationAt = useRef(0)
   const recognizer = useRef({ buffer: [], previous: null, count: 0, lastAdded: '' })
   const stateRef = useRef({ mode: 'learning', word: '', buffer: '', lastHand: Date.now(), wordCommitted: true, messageSent: true })
   const [mode, setMode] = useState('learning')
@@ -50,8 +52,7 @@ function App() {
   }
 
   const stopCamera = () => {
-    if (loopRef.current) clearInterval(loopRef.current)
-    loopRef.current = null
+    landmarkerRef.current?.stop()
     videoRef.current?.srcObject?.getTracks().forEach(track => track.stop())
     setRunning(false)
   }
@@ -89,58 +90,66 @@ function App() {
     } catch { setNotice('Could not finalize the signed message. Check the API server.') }
   }
 
-  const processFrame = async () => {
-    const video = videoRef.current; const canvas = canvasRef.current
-    if (!video || video.readyState < 2 || !canvas) return
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight
-    canvas.getContext('2d').drawImage(video, 0, 0)
-    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.75))
-    if (!blob) return
-    try {
-      const data = new FormData(); data.append('frame', blob, 'frame.jpg')
-      const response = await fetch(`${API}/predict`, { method: 'POST', body: data })
-      if (!response.ok) throw new Error(await response.text())
-      const result = await response.json()
-      if (!result.handDetected) {
-        recognizer.current = { ...recognizer.current, buffer: [], previous: null, count: 0, lastAdded: '' }
-        setPrediction('·'); setHold(0); setConfidence(0); setLastAdded('')
-        const c = stateRef.current; const elapsed = (Date.now() - c.lastHand) / 1000
-        if (c.mode === 'conversation') {
-          if (elapsed >= wordPause && !c.wordCommitted && c.word) {
-            setSentence(value => value + c.word + ' '); setCurrentWord('')
-            stateRef.current.wordCommitted = true
-          }
-          if (elapsed >= messagePause && !c.messageSent && stateRef.current.buffer.trim()) {
-            const raw = stateRef.current.buffer.trim(); setSentence('')
-            stateRef.current.buffer = ''; stateRef.current.messageSent = true
-            finalizeConversation(raw)
-          }
-        }
-        return
+  const handleNoHand = () => {
+    recognizer.current = { ...recognizer.current, buffer: [], previous: null, count: 0, lastAdded: '' }
+    setPrediction('·'); setHold(0); setConfidence(0); setLastAdded('')
+    const c = stateRef.current; const elapsed = (Date.now() - c.lastHand) / 1000
+    if (c.mode === 'conversation') {
+      if (elapsed >= wordPause && !c.wordCommitted && c.word) {
+        setSentence(value => value + c.word + ' '); setCurrentWord('')
+        stateRef.current.wordCommitted = true
       }
-      const c = stateRef.current
-      c.lastHand = Date.now(); c.wordCommitted = false; c.messageSent = false
+      if (elapsed >= messagePause && !c.messageSent && stateRef.current.buffer.trim()) {
+        const raw = stateRef.current.buffer.trim(); setSentence('')
+        stateRef.current.buffer = ''; stateRef.current.messageSent = true
+        finalizeConversation(raw)
+      }
+    }
+  }
+
+  // The landmark callback runs outside React. Only classifier results update UI,
+  // and they are throttled; the camera/video element never rerenders per frame.
+  const handleLandmarkFrame = async (frame) => {
+    if (!frame.leftPresent && !frame.rightPresent) return handleNoHand()
+    const c = stateRef.current
+    c.lastHand = Date.now(); c.wordCommitted = false; c.messageSent = false
+    if (classifierInFlight.current || performance.now() - lastClassificationAt.current < 180) return
+    const classifierInput = frame.rightPresent ? frame.rightRaw : frame.leftRaw
+    classifierInFlight.current = true; lastClassificationAt.current = performance.now()
+    try {
+      const response = await fetch(`${API}/classify-landmarks`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ landmarks: Array.from(classifierInput) }),
+      })
+      if (!response.ok) throw new Error('Classifier unavailable')
+      const result = await response.json()
       const r = recognizer.current
       r.buffer = [...r.buffer, result.prediction].slice(-5)
-      const letter = r.buffer.sort((a, b) => r.buffer.filter(x => x === b).length - r.buffer.filter(x => x === a).length)[0]
+      const letter = [...r.buffer].sort((a, b) => r.buffer.filter(x => x === b).length - r.buffer.filter(x => x === a).length)[0]
       r.count = letter === r.previous ? r.count + 1 : 0; r.previous = letter
       setPrediction(letter); setConfidence(result.confidence); setHold(Math.min(100, Math.round(r.count / 20 * 100)))
       if (r.count > 20 && r.lastAdded !== letter) {
         r.lastAdded = letter; setLastAdded(letter); addConfirmedSign(letter)
       }
-    } catch (error) { setNotice('Camera inference is unavailable. Start the Python API and confirm the model is present.') }
+    } catch { setNotice('Hand landmarks are running locally, but the legacy classifier API is unavailable.') }
+    finally { classifierInFlight.current = false }
   }
 
   const startCamera = async () => {
-    if (!health.modelReady) { setNotice(`Model unavailable: ${health.modelError || 'check backend startup'}`); return }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
       videoRef.current.srcObject = stream; await videoRef.current.play()
       stateRef.current.lastHand = Date.now(); setRunning(true); setNotice('')
-      loopRef.current = setInterval(processFrame, 220)
+      landmarkerRef.current ??= new BrowserHandLandmarker({
+        onFrame: handleLandmarkFrame,
+        onStatus: ({ state, message }) => {
+          if (state === 'error') setNotice(`Browser MediaPipe error: ${message}`)
+        },
+      })
+      landmarkerRef.current.start(videoRef.current)
     } catch { setNotice('Camera permission was denied or no camera is available.') }
   }
-  useEffect(() => () => stopCamera(), [])
+  useEffect(() => () => { stopCamera(); landmarkerRef.current?.destroy() }, [])
 
   const translate = async () => {
     const raw = `${sentence}${currentWord}`.trim()
@@ -165,7 +174,7 @@ function App() {
     <header><div className="brand"><span className="logo">🤟</span><div><h1>S-स्पर्श</h1><p>Indian Sign Language · Real-time AI Translation</p></div></div><div className="pills"><span className="pill live">● {mode === 'learning' ? 'Learning Mode' : 'Conversation Mode'}</span><span className="pill">MediaPipe · Groq</span></div></header>
     <aside><label className="section">Mode</label><button className={mode === 'learning' ? 'selected' : ''} onClick={() => switchMode('learning')}>🎓 Learning Mode</button><button className={mode === 'conversation' ? 'selected' : ''} onClick={() => switchMode('conversation')}>💬 Conversation Mode</button><p className="hint">{mode === 'learning' ? 'Use SPACE, COMMA and FULLSTOP signs to build your sentence.' : 'Pause between words. A longer pause sends the signed message.'}</p><label className="section">Display</label><button onClick={() => setDark(!dark)}>{dark ? '☀️ Light mode' : '🌙 Dark mode'}</button><label className="section">Camera</label><button className={running ? 'danger' : 'primary'} onClick={running ? stopCamera : startCamera}>{running ? '■ Stop camera' : '▶ Start camera'}</button>
     {mode === 'learning' ? <><label className="section">Actions</label><button className="primary" onClick={translate}>⚡ Translate</button><label className="section">Voice output</label><button onClick={() => speak(output.cleaned, 'en-US')}>🔊 Speak English</button><button onClick={() => speak(output.marathi, 'mr-IN')}>🔊 मराठी ऐका</button><button className="danger" onClick={resetCapture}>✕ Clear session</button></> : <><label className="section">Timing</label><label className="range">Word pause: {wordPause.toFixed(1)}s<input type="range" min="0.5" max="3" step="0.1" value={wordPause} onChange={e => setWordPause(+e.target.value)} /></label><label className="range">Message pause: {messagePause.toFixed(1)}s<input type="range" min="3" max="10" step="0.5" value={messagePause} onChange={e => setMessagePause(+e.target.value)} /></label><button className="danger" onClick={() => { setChat([]); resetCapture() }}>🗑 Clear chat</button></>}</aside>
-    <main>{notice && <div className="notice">{notice}</div>}<section className="feed"><div className="camera">{running ? <video ref={videoRef} muted playsInline /> : <div className="placeholder"><b>{mode === 'learning' ? '🤟' : '💬'}</b><span>Start the camera to begin</span></div>}<i className="corner one"/><i className="corner two"/><i className="corner three"/><i className="corner four"/></div><canvas ref={canvasRef} hidden />{mode === 'learning' ? <Learning sentence={sentence} word={currentWord} prediction={prediction} hold={hold} confidence={confidence} lastAdded={lastAdded} output={output} stats={stats} /> : <Conversation chat={chat} reply={reply} setReply={setReply} sendReply={sendReply} lastReply={lastReply} prediction={prediction} word={currentWord} elapsed={elapsed} wordPause={wordPause} messagePause={messagePause} />}</section></main>
+    <main>{notice && <div className="notice">{notice}</div>}<section className="feed"><div className="camera">{running ? <video ref={videoRef} muted playsInline /> : <div className="placeholder"><b>{mode === 'learning' ? '🤟' : '💬'}</b><span>Start the camera to begin</span></div>}<i className="corner one"/><i className="corner two"/><i className="corner three"/><i className="corner four"/></div>{mode === 'learning' ? <Learning sentence={sentence} word={currentWord} prediction={prediction} hold={hold} confidence={confidence} lastAdded={lastAdded} output={output} stats={stats} /> : <Conversation chat={chat} reply={reply} setReply={setReply} sendReply={sendReply} lastReply={lastReply} prediction={prediction} word={currentWord} elapsed={elapsed} wordPause={wordPause} messagePause={messagePause} />}</section></main>
   </div>
 }
 
