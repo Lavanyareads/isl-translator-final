@@ -148,15 +148,20 @@ function App() {
     if (!frame.leftPresent && !frame.rightPresent) return handleNoHand()
     const c = stateRef.current
     c.lastHand = Date.now(); c.wordCommitted = false; c.messageSent = false
-    if (c.mode === 'conversation' && dynamicEnabledRef.current && frame.dynamicPrediction) {
-      const dynamic = dynamicRecognizer.current
-      const label = frame.dynamicPrediction.label
-      dynamic.buffer = [...dynamic.buffer, label].slice(-2)
-      const stable = dynamic.buffer.length === 2 && dynamic.buffer.every(item => item === label)
-      if (stable && frame.dynamicPrediction.confidence >= 80 && dynamic.lastAdded !== label && label !== 'IDLE' && label !== 'NO_SIGN') {
-        dynamic.lastAdded = label
-        setSentence(value => value + label + ' ')
-        setPrediction(label); setConfidence(frame.dynamicPrediction.confidence); setHold(100); setLastAdded(label)
+    if (c.mode === 'conversation' && dynamicEnabledRef.current) {
+      // Dynamic mode is exclusive. Never let a static classifier interpret
+      // intermediate movement frames as letters while the LSTM buffer fills.
+      if (frame.dynamicPrediction) {
+        const dynamic = dynamicRecognizer.current
+        const label = frame.dynamicPrediction.label
+        dynamic.buffer = [...dynamic.buffer, label].slice(-2)
+        const stable = dynamic.buffer.length === 2 && dynamic.buffer.every(item => item === label)
+        setPrediction(label); setConfidence(frame.dynamicPrediction.confidence)
+        if (stable && frame.dynamicPrediction.confidence >= 80 && dynamic.lastAdded !== label && label !== 'IDLE' && label !== 'NO_SIGN') {
+          dynamic.lastAdded = label
+          setSentence(value => value + label + ' ')
+          setHold(100); setLastAdded(label)
+        }
       }
       return
     }
@@ -199,6 +204,7 @@ function App() {
         onStatus: ({ state, message, labels }) => {
           if (state === 'static-ready') { setStaticReady(true); setNotice(`Static ONNX ready: ${labels.join(', ')}`) }
           if (state === 'dynamic-ready') { setDynamicReady(true); setNotice(`Dynamic LSTM ready: ${labels.join(', ')}`) }
+          if (state === 'dynamic-unavailable') setNotice(`Dynamic LSTM could not load: ${message}`)
           if (state === 'error') setNotice(`Browser MediaPipe error: ${message}`)
         },
       })
