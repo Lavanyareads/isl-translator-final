@@ -10,7 +10,10 @@ let initialization
 async function initialize() {
   if (handLandmarker) return
   initialization ??= (async () => {
-    const vision = await FilesetResolver.forVisionTasks(WASM_ROOT)
+    // This is an ES module worker. Tell MediaPipe to use its module WASM
+    // loader; the classic loader expects a global ModuleFactory and causes
+    // "ModuleFactory not set" in module-worker scopes.
+    const vision = await FilesetResolver.forVisionTasks(WASM_ROOT, true)
     handLandmarker = await HandLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: MODEL_URL },
       runningMode: 'VIDEO',
