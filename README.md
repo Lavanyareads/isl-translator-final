@@ -133,14 +133,31 @@ Camera frames stay in the browser. A dedicated Web Worker samples at 20 FPS (max
 
 The legacy classifier remains available. It receives only one selected hand's 63 landmark values through `/api/classify-landmarks`; raw camera frames are no longer sent to the backend for MediaPipe detection.
 
-### Retraining static signs from browser landmarks
+### Static and dynamic datasets
 
-With the camera on, use **Dataset recorder** in the app sidebar: enter a label such as `HELLO` or `A`, hold that one sign steady, and select **Record static sign**. Each recording downloads a JSON file containing 30 normalized browser landmark frames. Move downloaded recordings to `data/browser/`, collecting multiple recordings for every class and including an `IDLE` class.
+Keep the two dataset types separate:
 
-Train the matching browser static model with:
+```text
+dataset/
+├── static/
+│   ├── A/
+│   │   ├── recording_001.json
+│   │   └── recording_002.json
+│   ├── HELLO/
+│   └── ...
+└── dynamic/
+    ├── SIGN_1/
+    │   ├── sequence_001/
+    │   └── sequence_002/
+    └── ...
+```
+
+Each static JSON recording contains browser-normalized `leftHand` / `rightHand` vectors and presence masks. The main translator UI has no data-collection controls. Dynamic sequences are reserved for the LSTM phase and are not trained yet.
+
+Train the static browser-landmark model from the VS Code terminal with:
 
 ```bash
-python src/train_browser_static.py
+python src/train_static.py
 ```
 
 The model is saved to `models/browser_static_model.pkl`. The API detects that file automatically and uses it before falling back to the legacy model. Static word signs listed in `frontend/src/config/signs.js` commit to the sentence builder after a short consensus; letters continue building a fingerspelled word.

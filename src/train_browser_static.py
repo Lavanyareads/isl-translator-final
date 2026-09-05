@@ -1,7 +1,8 @@
 """Train a static sign classifier from browser MediaPipe landmark recordings.
 
-Input files are downloaded by the React Dataset Recorder to data/browser/.
-Each frame has normalized left/right 63-value vectors plus two presence masks.
+Input files live in dataset/static/<LABEL>/*.json. Each frame has normalized
+left/right 63-value vectors plus two presence masks. This is intentionally
+separate from the future dataset/dynamic/<LABEL>/sequence_<ID>/ layout.
 """
 from __future__ import annotations
 
@@ -30,10 +31,12 @@ def as_features(frame: dict) -> list[float]:
 
 def load_recordings(data_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     features, labels, groups = [], [], []
-    for path in sorted(data_dir.glob("*.json")):
+    for path in sorted(data_dir.glob("*/*.json")):
         with path.open(encoding="utf-8") as handle:
             recording = json.load(handle)
-        label = str(recording.get("label", "")).strip().upper()
+        # The folder is the source of truth, avoiding accidental mislabeled
+        # files and matching the documented static-dataset structure.
+        label = path.parent.name.strip().upper()
         if not label or recording.get("kind", "static") != "static":
             continue
         for frame in recording.get("frames", []):
@@ -50,7 +53,7 @@ def load_recordings(data_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir", default="data/browser", type=Path)
+    parser.add_argument("--data-dir", default="dataset/static", type=Path)
     parser.add_argument("--output", default="models/browser_static_model.pkl", type=Path)
     args = parser.parse_args()
 

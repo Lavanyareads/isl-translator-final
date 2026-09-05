@@ -17,3 +17,7 @@ venv/
 # React/Vite
 frontend/node_modules/
 frontend/dist/
+
+# Locally collected browser landmark recordings
+dataset/static/**/*.json
+dataset/dynamic/**/*.json

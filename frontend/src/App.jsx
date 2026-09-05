@@ -6,7 +6,6 @@ const API = '/api'
 const SPECIAL = { SPACE: ' ', COMMA: ',', FULLSTOP: '.' }
 const ignoredInConversation = new Set(Object.keys(SPECIAL))
 const CONSENSUS_PREDICTIONS = 2
-const RECORDING_FRAMES = 30
 
 function speak(text, lang) {
   if (!text) return
@@ -22,7 +21,6 @@ function App() {
   const landmarkerRef = useRef(null)
   const classifierInFlight = useRef(false)
   const lastClassificationAt = useRef(0)
-  const recorderRef = useRef(null)
   const recognizer = useRef({ buffer: [], previous: null, count: 0, lastAdded: '' })
   const stateRef = useRef({ mode: 'learning', word: '', buffer: '', lastHand: Date.now(), wordCommitted: true, messageSent: true })
   const [mode, setMode] = useState('learning')
@@ -43,8 +41,6 @@ function App() {
   const [reply, setReply] = useState('')
   const [lastReply, setLastReply] = useState('')
   const [notice, setNotice] = useState('')
-  const [datasetLabel, setDatasetLabel] = useState('')
-  const [recordingProgress, setRecordingProgress] = useState(0)
 
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light' }, [dark])
   useEffect(() => { fetch(`${API}/health`).then(r => r.json()).then(setHealth).catch(() => setHealth({ modelReady: false, modelError: 'API server is not running.' })) }, [])
@@ -72,12 +68,6 @@ function App() {
       return
     }
     setStats(value => ({ ...value, signs: value.signs + 1 }))
-    if (isWordSign(letter)) {
-      setSentence(value => value + (capture.word ? `${capture.word} ` : '') + `${letter} `)
-      setCurrentWord('')
-      setStats(value => ({ ...value, words: value.words + 1 + (capture.word ? 1 : 0) }))
-      return
-    }
     if (SPECIAL[letter]) {
       const mark = SPECIAL[letter]
       if (mark === ' ') {
@@ -104,45 +94,6 @@ function App() {
     } catch { setNotice('Could not finalize the signed message. Check the API server.') }
   }
 
-  const finishRecording = (recording) => {
-    const payload = JSON.stringify({
-      schemaVersion: 1,
-      kind: 'static',
-      label: recording.label,
-      capturedAt: new Date().toISOString(),
-      frames: recording.frames,
-    })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(new Blob([payload], { type: 'application/json' }))
-    link.download = `${recording.label.toLowerCase()}-${Date.now()}.json`
-    link.click()
-    URL.revokeObjectURL(link.href)
-    recorderRef.current = null
-    setRecordingProgress(0)
-    setNotice(`Saved ${RECORDING_FRAMES} browser landmark frames for ${recording.label}. Move the downloaded JSON into data/browser/.`)
-  }
-
-  const recordFrame = (frame) => {
-    const recording = recorderRef.current
-    if (!recording || (!frame.leftPresent && !frame.rightPresent)) return
-    recording.frames.push({
-      leftHand: Array.from(frame.leftHand), rightHand: Array.from(frame.rightHand),
-      leftPresent: frame.leftPresent, rightPresent: frame.rightPresent,
-      timestamp: frame.timestamp,
-    })
-    setRecordingProgress(recording.frames.length)
-    if (recording.frames.length >= RECORDING_FRAMES) finishRecording(recording)
-  }
-
-  const startRecording = () => {
-    const label = datasetLabel.trim().toUpperCase()
-    if (!running) return setNotice('Start the camera, hold one sign steady, then record it.')
-    if (!label) return setNotice('Enter a label such as HELLO or A before recording.')
-    recorderRef.current = { label, frames: [] }
-    setRecordingProgress(0)
-    setNotice(`Recording ${label}: hold the sign steady until 30 landmark frames are captured.`)
-  }
-
   const handleNoHand = () => {
     recognizer.current = { ...recognizer.current, buffer: [], previous: null, count: 0, lastAdded: '' }
     setPrediction('·'); setHold(0); setConfidence(0); setLastAdded('')
@@ -163,7 +114,6 @@ function App() {
   // The landmark callback runs outside React. Only classifier results update UI,
   // and they are throttled; the camera/video element never rerenders per frame.
   const handleLandmarkFrame = async (frame) => {
-    recordFrame(frame)
     if (!frame.leftPresent && !frame.rightPresent) return handleNoHand()
     const c = stateRef.current
     c.lastHand = Date.now(); c.wordCommitted = false; c.messageSent = false
@@ -191,7 +141,8 @@ function App() {
       const letter = [...r.buffer].sort((a, b) => r.buffer.filter(x => x === b).length - r.buffer.filter(x => x === a).length)[0]
       r.count = letter === r.previous ? r.count + 1 : 0; r.previous = letter
       setPrediction(letter); setConfidence(result.confidence); setHold(Math.min(100, Math.round(r.count / 20 * 100)))
-      if (r.count >= CONSENSUS_PREDICTIONS && r.lastAdded !== letter) {
+      const requiredConsensus = c.mode === 'conversation' ? CONSENSUS_PREDICTIONS : 20
+      if (r.count >= requiredConsensus && r.lastAdded !== letter) {
         r.lastAdded = letter; setLastAdded(letter); addConfirmedSign(letter)
       }
     } catch { setNotice('Hand landmarks are running locally, but the legacy classifier API is unavailable.') }
@@ -241,7 +192,7 @@ function App() {
 
   return <div className="app">
     <header><div className="brand"><span className="logo">🤟</span><div><h1>S-स्पर्श</h1><p>Indian Sign Language · Real-time AI Translation</p></div></div><div className="pills"><span className="pill live">● {mode === 'learning' ? 'Learning Mode' : 'Conversation Mode'}</span><span className="pill">MediaPipe · Groq</span></div></header>
-    <aside><label className="section">Mode</label><button className={mode === 'learning' ? 'selected' : ''} onClick={() => switchMode('learning')}>🎓 Learning Mode</button><button className={mode === 'conversation' ? 'selected' : ''} onClick={() => switchMode('conversation')}>💬 Conversation Mode</button><p className="hint">{mode === 'learning' ? 'Use SPACE, COMMA and FULLSTOP signs to build your sentence.' : 'Pause between words. A longer pause sends the signed message.'}</p><label className="section">Display</label><button onClick={() => setDark(!dark)}>{dark ? '☀️ Light mode' : '🌙 Dark mode'}</button><label className="section">Camera</label><button className={running ? 'danger' : 'primary'} onClick={running ? stopCamera : startCamera}>{running ? '■ Stop camera' : '▶ Start camera'}</button><label className="section">Dataset recorder</label><input className="dataset-input" value={datasetLabel} onChange={event => setDatasetLabel(event.target.value)} placeholder="Label, e.g. HELLO"/><button className="primary" onClick={startRecording}>{recordingProgress ? `Recording ${recordingProgress}/${RECORDING_FRAMES}` : '● Record static sign'}</button>
+    <aside><label className="section">Mode</label><button className={mode === 'learning' ? 'selected' : ''} onClick={() => switchMode('learning')}>🎓 Learning Mode</button><button className={mode === 'conversation' ? 'selected' : ''} onClick={() => switchMode('conversation')}>💬 Conversation Mode</button><p className="hint">{mode === 'learning' ? 'Use SPACE, COMMA and FULLSTOP signs to build your sentence.' : 'Pause between words. A longer pause sends the signed message.'}</p><label className="section">Display</label><button onClick={() => setDark(!dark)}>{dark ? '☀️ Light mode' : '🌙 Dark mode'}</button><label className="section">Camera</label><button className={running ? 'danger' : 'primary'} onClick={running ? stopCamera : startCamera}>{running ? '■ Stop camera' : '▶ Start camera'}</button>
     {mode === 'learning' ? <><label className="section">Actions</label><button className="primary" onClick={translate}>⚡ Translate</button><label className="section">Voice output</label><button onClick={() => speak(output.cleaned, 'en-US')}>🔊 Speak English</button><button onClick={() => speak(output.marathi, 'mr-IN')}>🔊 मराठी ऐका</button><button className="danger" onClick={resetCapture}>✕ Clear session</button></> : <><label className="section">Timing</label><label className="range">Word pause: {wordPause.toFixed(1)}s<input type="range" min="0.5" max="3" step="0.1" value={wordPause} onChange={e => setWordPause(+e.target.value)} /></label><label className="range">Message pause: {messagePause.toFixed(1)}s<input type="range" min="3" max="10" step="0.5" value={messagePause} onChange={e => setMessagePause(+e.target.value)} /></label><button className="danger" onClick={() => { setChat([]); resetCapture() }}>🗑 Clear chat</button></>}</aside>
     <main>{notice && <div className="notice">{notice}</div>}<section className="feed"><div className="camera"><video ref={videoRef} className={running ? '' : 'camera-video-hidden'} muted playsInline />{!running && <div className="placeholder"><b>{mode === 'learning' ? '🤟' : '💬'}</b><span>Start the camera to begin</span></div>}<i className="corner one"/><i className="corner two"/><i className="corner three"/><i className="corner four"/></div>{mode === 'learning' ? <Learning sentence={sentence} word={currentWord} prediction={prediction} hold={hold} confidence={confidence} lastAdded={lastAdded} output={output} stats={stats} /> : <Conversation chat={chat} reply={reply} setReply={setReply} sendReply={sendReply} lastReply={lastReply} prediction={prediction} word={currentWord} elapsed={elapsed} wordPause={wordPause} messagePause={messagePause} />}</section></main>
   </div>
