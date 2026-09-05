@@ -6,6 +6,7 @@ const API = '/api'
 const SPECIAL = { SPACE: ' ', COMMA: ',', FULLSTOP: '.' }
 const ignoredInConversation = new Set(Object.keys(SPECIAL))
 const CONSENSUS_PREDICTIONS = 2
+const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]]
 
 function speak(text, lang) {
   if (!text) return
@@ -18,9 +19,12 @@ function speak(text, lang) {
 
 function App() {
   const videoRef = useRef(null)
+  const overlayRef = useRef(null)
   const landmarkerRef = useRef(null)
   const classifierInFlight = useRef(false)
   const lastClassificationAt = useRef(0)
+  const dynamicEnabledRef = useRef(false)
+  const dynamicRecognizer = useRef({ buffer: [], lastAdded: '' })
   const recognizer = useRef({ buffer: [], previous: null, count: 0, lastAdded: '' })
   const stateRef = useRef({ mode: 'learning', word: '', buffer: '', lastHand: Date.now(), wordCommitted: true, messageSent: true })
   const [mode, setMode] = useState('learning')
@@ -41,12 +45,35 @@ function App() {
   const [reply, setReply] = useState('')
   const [lastReply, setLastReply] = useState('')
   const [notice, setNotice] = useState('')
+  const [dynamicReady, setDynamicReady] = useState(false)
+  const [dynamicEnabled, setDynamicEnabled] = useState(false)
+  const [staticReady, setStaticReady] = useState(false)
 
   useEffect(() => { document.documentElement.dataset.theme = dark ? 'dark' : 'light' }, [dark])
   useEffect(() => { fetch(`${API}/health`).then(r => r.json()).then(setHealth).catch(() => setHealth({ modelReady: false, modelError: 'API server is not running.' })) }, [])
   useEffect(() => { stateRef.current.mode = mode }, [mode])
   useEffect(() => { stateRef.current.word = currentWord }, [currentWord])
   useEffect(() => { stateRef.current.buffer = sentence }, [sentence])
+  useEffect(() => { dynamicEnabledRef.current = dynamicEnabled }, [dynamicEnabled])
+
+  const drawSkeletons = (frame) => {
+    const canvas = overlayRef.current; const video = videoRef.current
+    if (!canvas || !video) return
+    const width = video.videoWidth; const height = video.videoHeight
+    if (!width || !height) return
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height }
+    const context = canvas.getContext('2d'); context.clearRect(0, 0, width, height)
+    const drawHand = (values, present, colour) => {
+      if (!present) return
+      context.strokeStyle = colour; context.fillStyle = '#ffffff'; context.lineWidth = Math.max(2, width / 450)
+      context.beginPath()
+      HAND_CONNECTIONS.forEach(([from, to]) => { context.moveTo(values[from * 3] * width, values[from * 3 + 1] * height); context.lineTo(values[to * 3] * width, values[to * 3 + 1] * height) })
+      context.stroke()
+      for (let i = 0; i < 21; i += 1) { context.beginPath(); context.arc(values[i * 3] * width, values[i * 3 + 1] * height, Math.max(3, width / 220), 0, Math.PI * 2); context.fill() }
+    }
+    drawHand(frame.leftRaw, frame.leftPresent, '#60a5fa')
+    drawHand(frame.rightRaw, frame.rightPresent, '#e879f9')
+  }
 
   const resetCapture = () => {
     recognizer.current = { buffer: [], previous: null, count: 0, lastAdded: '' }
@@ -95,6 +122,9 @@ function App() {
   }
 
   const handleNoHand = () => {
+    dynamicRecognizer.current = { buffer: [], lastAdded: '' }
+    const canvas = overlayRef.current
+    canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
     recognizer.current = { ...recognizer.current, buffer: [], previous: null, count: 0, lastAdded: '' }
     setPrediction('·'); setHold(0); setConfidence(0); setLastAdded('')
     const c = stateRef.current; const elapsed = (Date.now() - c.lastHand) / 1000
@@ -114,28 +144,36 @@ function App() {
   // The landmark callback runs outside React. Only classifier results update UI,
   // and they are throttled; the camera/video element never rerenders per frame.
   const handleLandmarkFrame = async (frame) => {
+    drawSkeletons(frame)
     if (!frame.leftPresent && !frame.rightPresent) return handleNoHand()
     const c = stateRef.current
     c.lastHand = Date.now(); c.wordCommitted = false; c.messageSent = false
+    if (c.mode === 'conversation' && dynamicEnabledRef.current && frame.dynamicPrediction) {
+      const dynamic = dynamicRecognizer.current
+      const label = frame.dynamicPrediction.label
+      dynamic.buffer = [...dynamic.buffer, label].slice(-2)
+      const stable = dynamic.buffer.length === 2 && dynamic.buffer.every(item => item === label)
+      if (stable && frame.dynamicPrediction.confidence >= 80 && dynamic.lastAdded !== label && label !== 'IDLE' && label !== 'NO_SIGN') {
+        dynamic.lastAdded = label
+        setSentence(value => value + label + ' ')
+        setPrediction(label); setConfidence(frame.dynamicPrediction.confidence); setHold(100); setLastAdded(label)
+      }
+      return
+    }
     if (classifierInFlight.current || performance.now() - lastClassificationAt.current < 180) return
-    const classifierInput = frame.rightPresent ? frame.rightRaw : frame.leftRaw
     classifierInFlight.current = true; lastClassificationAt.current = performance.now()
     try {
-      const browserFeatures = [...frame.leftHand, ...frame.rightHand, Number(frame.leftPresent), Number(frame.rightPresent)]
-      let response = await fetch(`${API}/classify-browser-static`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ features: browserFeatures }),
-      })
-      // Until the browser-trained model exists, retain the old model as a
-      // compatibility fallback. Neither route ever receives a camera image.
-      if (!response.ok) {
-        response = await fetch(`${API}/classify-landmarks`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ landmarks: Array.from(classifierInput) }),
-        })
+      // Learning Mode retains its existing classifier behaviour. Conversation
+      // Mode uses the browser ONNX model when it is available.
+      let result = c.mode === 'conversation' ? frame.staticPrediction : null
+      // Compatibility fallback while static ONNX is absent. No camera image
+      // is transmitted in either path.
+      if (!result) {
+        const browserFeatures = [...frame.leftHand, ...frame.rightHand, Number(frame.leftPresent), Number(frame.rightPresent)]
+        const response = await fetch(`${API}/classify-browser-static`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ features: browserFeatures }) })
+        if (!response.ok) throw new Error('Classifier unavailable')
+        result = await response.json()
       }
-      if (!response.ok) throw new Error('Classifier unavailable')
-      const result = await response.json()
       const r = recognizer.current
       r.buffer = [...r.buffer, result.prediction].slice(-5)
       const letter = [...r.buffer].sort((a, b) => r.buffer.filter(x => x === b).length - r.buffer.filter(x => x === a).length)[0]
@@ -158,7 +196,9 @@ function App() {
       stateRef.current.lastHand = Date.now(); setRunning(true); setNotice('')
       landmarkerRef.current ??= new BrowserHandLandmarker({
         onFrame: handleLandmarkFrame,
-        onStatus: ({ state, message }) => {
+        onStatus: ({ state, message, labels }) => {
+          if (state === 'static-ready') { setStaticReady(true); setNotice(`Static ONNX ready: ${labels.join(', ')}`) }
+          if (state === 'dynamic-ready') { setDynamicReady(true); setNotice(`Dynamic LSTM ready: ${labels.join(', ')}`) }
           if (state === 'error') setNotice(`Browser MediaPipe error: ${message}`)
         },
       })
@@ -191,10 +231,10 @@ function App() {
   const elapsed = running && mode === 'conversation' ? ((Date.now() - stateRef.current.lastHand) / 1000).toFixed(1) : '0.0'
 
   return <div className="app">
-    <header><div className="brand"><span className="logo">🤟</span><div><h1>S-स्पर्श</h1><p>Indian Sign Language · Real-time AI Translation</p></div></div><div className="pills"><span className="pill live">● {mode === 'learning' ? 'Learning Mode' : 'Conversation Mode'}</span><span className="pill">MediaPipe · Groq</span></div></header>
+    <header><div className="brand"><span className="logo">🤟</span><div><h1>S-स्पर्श</h1><p>Indian Sign Language · Real-time AI Translation</p></div></div><div className="pills"><span className="pill live">● {mode === 'learning' ? 'Learning Mode' : 'Conversation Mode'}</span><span className="pill">MediaPipe · {staticReady ? 'Local ONNX' : 'Groq'}</span></div></header>
     <aside><label className="section">Mode</label><button className={mode === 'learning' ? 'selected' : ''} onClick={() => switchMode('learning')}>🎓 Learning Mode</button><button className={mode === 'conversation' ? 'selected' : ''} onClick={() => switchMode('conversation')}>💬 Conversation Mode</button><p className="hint">{mode === 'learning' ? 'Use SPACE, COMMA and FULLSTOP signs to build your sentence.' : 'Pause between words. A longer pause sends the signed message.'}</p><label className="section">Display</label><button onClick={() => setDark(!dark)}>{dark ? '☀️ Light mode' : '🌙 Dark mode'}</button><label className="section">Camera</label><button className={running ? 'danger' : 'primary'} onClick={running ? stopCamera : startCamera}>{running ? '■ Stop camera' : '▶ Start camera'}</button>
-    {mode === 'learning' ? <><label className="section">Actions</label><button className="primary" onClick={translate}>⚡ Translate</button><label className="section">Voice output</label><button onClick={() => speak(output.cleaned, 'en-US')}>🔊 Speak English</button><button onClick={() => speak(output.marathi, 'mr-IN')}>🔊 मराठी ऐका</button><button className="danger" onClick={resetCapture}>✕ Clear session</button></> : <><label className="section">Timing</label><label className="range">Word pause: {wordPause.toFixed(1)}s<input type="range" min="0.5" max="3" step="0.1" value={wordPause} onChange={e => setWordPause(+e.target.value)} /></label><label className="range">Message pause: {messagePause.toFixed(1)}s<input type="range" min="3" max="10" step="0.5" value={messagePause} onChange={e => setMessagePause(+e.target.value)} /></label><button className="danger" onClick={() => { setChat([]); resetCapture() }}>🗑 Clear chat</button></>}</aside>
-    <main>{notice && <div className="notice">{notice}</div>}<section className="feed"><div className="camera"><video ref={videoRef} className={running ? '' : 'camera-video-hidden'} muted playsInline />{!running && <div className="placeholder"><b>{mode === 'learning' ? '🤟' : '💬'}</b><span>Start the camera to begin</span></div>}<i className="corner one"/><i className="corner two"/><i className="corner three"/><i className="corner four"/></div>{mode === 'learning' ? <Learning sentence={sentence} word={currentWord} prediction={prediction} hold={hold} confidence={confidence} lastAdded={lastAdded} output={output} stats={stats} /> : <Conversation chat={chat} reply={reply} setReply={setReply} sendReply={sendReply} lastReply={lastReply} prediction={prediction} word={currentWord} elapsed={elapsed} wordPause={wordPause} messagePause={messagePause} />}</section></main>
+    {mode === 'learning' ? <><label className="section">Actions</label><button className="primary" onClick={translate}>⚡ Translate</button><label className="section">Voice output</label><button onClick={() => speak(output.cleaned, 'en-US')}>🔊 Speak English</button><button onClick={() => speak(output.marathi, 'mr-IN')}>🔊 मराठी ऐका</button><button className="danger" onClick={resetCapture}>✕ Clear session</button></> : <><label className="section">Dynamic signs</label><button disabled={!dynamicReady} className={dynamicEnabled ? 'selected' : ''} onClick={() => { setDynamicEnabled(value => !value); dynamicRecognizer.current = { buffer: [], lastAdded: '' } }}>{dynamicReady ? `${dynamicEnabled ? '✓' : '○'} Dynamic LSTM` : 'Dynamic LSTM not exported'}</button><label className="section">Timing</label><label className="range">Word pause: {wordPause.toFixed(1)}s<input type="range" min="0.5" max="3" step="0.1" value={wordPause} onChange={e => setWordPause(+e.target.value)} /></label><label className="range">Message pause: {messagePause.toFixed(1)}s<input type="range" min="3" max="10" step="0.5" value={messagePause} onChange={e => setMessagePause(+e.target.value)} /></label><button className="danger" onClick={() => { setChat([]); resetCapture() }}>🗑 Clear chat</button></>}</aside>
+    <main>{notice && <div className="notice">{notice}</div>}<section className="feed"><div className="camera"><video ref={videoRef} className={running ? '' : 'camera-video-hidden'} muted playsInline /><canvas ref={overlayRef} className={running ? 'hand-overlay' : 'camera-video-hidden'} />{!running && <div className="placeholder"><b>{mode === 'learning' ? '🤟' : '💬'}</b><span>Start the camera to begin</span></div>}<i className="corner one"/><i className="corner two"/><i className="corner three"/><i className="corner four"/></div>{mode === 'learning' ? <Learning sentence={sentence} word={currentWord} prediction={prediction} hold={hold} confidence={confidence} lastAdded={lastAdded} output={output} stats={stats} /> : <Conversation chat={chat} reply={reply} setReply={setReply} sendReply={sendReply} lastReply={lastReply} prediction={prediction} word={currentWord} elapsed={elapsed} wordPause={wordPause} messagePause={messagePause} />}</section></main>
   </div>
 }
 
