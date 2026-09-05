@@ -1,6 +1,6 @@
 # S-स्पर्श — Indian Sign Language (ISL) Translator
 
-A real-time ISL-to-text translator that reads hand signs through your webcam, converts them into English words/sentences, and translates them into Marathi using Groq's LLM API. Built with **MediaPipe** (hand landmark detection), **scikit-learn** (sign classification), and **Streamlit** (web UI).
+A real-time ISL-to-text translator that reads hand signs through your webcam, converts them into English words/sentences, and translates them into Marathi using Groq's LLM API. The interface is now built with **React**, while a small **FastAPI** service runs MediaPipe and the existing scikit-learn classifier.
 
 ## Features
 
@@ -15,7 +15,9 @@ A real-time ISL-to-text translator that reads hand signs through your webcam, co
 
 ```
 .
-├── app.py              # Streamlit web app (main entry point)
+├── frontend/           # React + Vite web app
+├── backend/main.py     # FastAPI server for recognition and translation
+├── app.py              # Legacy Streamlit implementation (kept for reference)
 ├── groq_helper.py       # Groq API wrapper for cleanup + Marathi translation
 ├── collect_data.py      # Records hand-landmark samples for a sign into data/<sign>.csv
 ├── train.py              # Trains a classifier on data/*.csv and saves models/model.pkl
@@ -97,20 +99,31 @@ python train.py
 
 This loads every CSV in `data/`, trains an SVM and a Random Forest, keeps whichever performs better on a held-out test split, and saves it to `models/model.pkl`.
 
-## 6. Run the app
+## 6. Run the React app
 
-### Streamlit web app (recommended)
+Install the Python dependencies, then start the API in one terminal:
 
 ```bash
-streamlit run app.py
+pip install -r requirements.txt
+uvicorn backend.main:app --reload --port 8000
 ```
 
-This opens the app in your browser (usually `http://localhost:8501`). Use the sidebar to:
+In a second terminal, install the frontend dependencies and run Vite:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open the local URL printed by Vite (normally `http://localhost:5173`). The React app provides:
 - Toggle dark/light mode
 - Start/stop the camera
 - Translate the captured sentence via Groq
 - Hear the English/Marathi output spoken aloud
 - Clear the session
+
+The Vite development server forwards `/api` requests to `http://127.0.0.1:8000`. For production, build the frontend with `npm run build` and serve `frontend/dist` from your preferred static-file host; configure it to forward `/api` to FastAPI.
 
 ### Standalone OpenCV version (no browser, for quick debugging)
 

@@ -1,4 +1,3 @@
-streamlit
 opencv-python
 mediapipe==0.10.9
 numpy
@@ -10,3 +9,6 @@ python-dotenv
 transformers
 torch
 deep-translator
+fastapi
+uvicorn[standard]
+python-multipart
