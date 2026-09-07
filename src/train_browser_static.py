@@ -13,7 +13,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import GroupShuffleSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -66,13 +65,18 @@ def main() -> None:
         raise RuntimeError("Collect at least two separate recordings for every class before training.")
 
     # Entire recordings stay together: adjacent frames are nearly identical
-    # and would otherwise leak into both train and test sets.
-    splitter = GroupShuffleSplit(n_splits=25, test_size=0.2, random_state=42)
-    for train_index, test_index in splitter.split(X, y, groups):
-        if set(y[train_index]) == set(classes) and set(y[test_index]) == set(classes):
-            break
-    else:
-        raise RuntimeError("Could not create a group-separated test split; collect more recordings per class.")
+    # and would otherwise leak into both train and test sets. Select the test
+    # recordings per label instead of using a generic group splitter, which can
+    # accidentally hold out only A or only HELLO on a small two-class dataset.
+    rng = np.random.default_rng(42)
+    test_groups = []
+    for label in classes:
+        label_groups = np.unique(groups[y == label])
+        count = max(1, round(len(label_groups) * 0.2))
+        count = min(count, len(label_groups) - 1)
+        test_groups.extend(rng.choice(label_groups, size=count, replace=False))
+    test_mask = np.isin(groups, test_groups)
+    train_index, test_index = np.flatnonzero(~test_mask), np.flatnonzero(test_mask)
     X_train, X_test = X[train_index], X[test_index]
     y_train, y_test = y[train_index], y[test_index]
     candidates = {
