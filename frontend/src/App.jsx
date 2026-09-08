@@ -24,7 +24,7 @@ function App() {
   const classifierInFlight = useRef(false)
   const lastClassificationAt = useRef(0)
   const dynamicEnabledRef = useRef(false)
-  const dynamicRecognizer = useRef({ buffer: [], lastAdded: '' })
+  const dynamicRecognizer = useRef({ buffer: [], lastAdded: '', wasLocked: false, cooldownUntil: 0 })
   const recognizer = useRef({ buffer: [], previous: null, count: 0, lastAdded: '' })
   const stateRef = useRef({ mode: 'learning', word: '', buffer: '', lastHand: Date.now(), wordCommitted: true, messageSent: true })
   const [mode, setMode] = useState('learning')
@@ -123,7 +123,7 @@ function App() {
   }
 
   const handleNoHand = () => {
-    dynamicRecognizer.current = { buffer: [], lastAdded: '' }
+    dynamicRecognizer.current = { buffer: [], lastAdded: '', wasLocked: false, cooldownUntil: 0 }
     const canvas = overlayRef.current
     canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
     recognizer.current = { ...recognizer.current, buffer: [], previous: null, count: 0, lastAdded: '' }
@@ -149,13 +149,27 @@ function App() {
     if (!frame.leftPresent && !frame.rightPresent) return handleNoHand()
     const c = stateRef.current
     c.lastHand = Date.now(); c.wordCommitted = false; c.messageSent = false
-    const movingDynamicSign = c.mode === 'conversation' && dynamicEnabledRef.current && frame.dynamicMotionActive
-    if (c.mode === 'conversation' && dynamicEnabledRef.current && frame.dynamicPrediction) {
-      // A dynamic model trained without an IDLE class always returns one of
-      // its labels. It can only take priority when the raw landmark trail
-      // confirms a moving hand, so a held static A–Z sign remains static.
-      if (movingDynamicSign && frame.dynamicWindowReady && frame.dynamicPrediction.confidence >= 80) {
-        const dynamic = dynamicRecognizer.current
+    const dynamic = dynamicRecognizer.current
+    const dynamicActive = c.mode === 'conversation' && dynamicEnabledRef.current
+    const dynamicLocked = dynamicActive && frame.dynamicLock
+    if (dynamic.wasLocked && !dynamicLocked) {
+      // Returning to static recognition must not re-commit the last temporal
+      // label after the user's hand settles.
+      dynamic.cooldownUntil = Date.now() + 400
+      dynamic.buffer = []
+      dynamic.lastAdded = ''
+    }
+    if (!dynamic.wasLocked && dynamicLocked) {
+      // Discard an LSTM label accumulated while the hand was held still.
+      dynamic.buffer = []
+      dynamic.lastAdded = ''
+    }
+    dynamic.wasLocked = dynamicLocked
+    if (dynamicActive && frame.dynamicPrediction) {
+      // The LSTM has no IDLE class, so it is never trusted for a held pose.
+      // It needs a hysteresis lock, a ready window, >=75% confidence, and two
+      // matching temporal predictions before it can replace static output.
+      if (dynamicLocked && Date.now() >= dynamic.cooldownUntil && frame.dynamicWindowReady && frame.dynamicPrediction.confidence >= 75) {
         const label = frame.dynamicPrediction.label
         dynamic.buffer = [...dynamic.buffer, label].slice(-2)
         const stable = dynamic.buffer.length === 2 && dynamic.buffer.every(item => item === label)
@@ -167,11 +181,12 @@ function App() {
         }
         return
       }
+      if (dynamicLocked) dynamic.buffer = []
     }
     // While a hand is in motion, wait for its temporal model rather than
     // committing incidental static poses from the middle of that gesture.
     // A held static sign falls through immediately once it becomes still.
-    if (movingDynamicSign) {
+    if (dynamicLocked) {
       setPrediction('…'); setConfidence(0); setHold(0)
       return
     }
@@ -249,7 +264,7 @@ function App() {
     const next = !dynamicEnabledRef.current
     dynamicEnabledRef.current = next
     landmarkerRef.current?.setDynamicEnabled(next)
-    dynamicRecognizer.current = { buffer: [], lastAdded: '' }
+    dynamicRecognizer.current = { buffer: [], lastAdded: '', wasLocked: false, cooldownUntil: 0 }
     setDynamicEnabled(next)
     setPrediction('·'); setConfidence(0); setHold(0); setLastAdded('')
     setNotice(next ? 'Dynamic assist is active. Static and dynamic models run together; confident sequence predictions take priority.' : 'Static sign classifier is active.')

@@ -17,7 +17,15 @@ let dynamicHistory = []
 let dynamicMotionHistory = []
 let dynamicModelChecked = false
 let dynamicEnabled = false
-const DYNAMIC_MOTION_THRESHOLD = 0.035
+// Raw MediaPipe image coordinates are 0–1. Averaging 21 joints over the
+// existing ~10-frame trail makes 0.035 a deliberate gesture, while 0.015 is
+// small tracking/held-pose jitter. Separate thresholds prevent lock flapping.
+const ENTER_DYNAMIC_MOTION = 0.035
+const EXIT_DYNAMIC_MOTION = 0.015
+const MOTION_PERSISTENCE_FRAMES = 4
+let dynamicLock = false
+let movementFrames = 0
+let settledFrames = 0
 
 async function initializeStaticModel() {
   if (staticModelChecked) return
@@ -109,11 +117,24 @@ async function predictDynamic(frame) {
       points += 1
     }
     frame.dynamicMotion = points ? total / points : 0
-    frame.dynamicMotionActive = frame.dynamicMotion >= DYNAMIC_MOTION_THRESHOLD
   } else {
     frame.dynamicMotion = 0
-    frame.dynamicMotionActive = false
   }
+  if (!dynamicLock) {
+    movementFrames = frame.dynamicMotion >= ENTER_DYNAMIC_MOTION ? movementFrames + 1 : 0
+    if (movementFrames >= MOTION_PERSISTENCE_FRAMES) {
+      dynamicLock = true
+      settledFrames = 0
+    }
+  } else {
+    settledFrames = frame.dynamicMotion <= EXIT_DYNAMIC_MOTION ? settledFrames + 1 : 0
+    if (settledFrames >= MOTION_PERSISTENCE_FRAMES) {
+      dynamicLock = false
+      movementFrames = 0
+    }
+  }
+  frame.dynamicLock = dynamicLock
+  frame.dynamicMotionActive = dynamicLock
   frame.dynamicWindowReady = dynamicHistory.length >= dynamicFrames
   // Two LSTM evaluations per second are enough for a 30-frame gesture while
   // preserving a responsive landmark overlay on lower-end phones.
@@ -200,12 +221,18 @@ self.onmessage = async ({ data }) => {
       initialization = undefined
       dynamicHistory = []
       dynamicMotionHistory = []
+      dynamicLock = false
+      movementFrames = 0
+      settledFrames = 0
       return
     }
     if (data.type === 'set-dynamic-enabled') {
       dynamicEnabled = Boolean(data.enabled)
       dynamicHistory = []
       dynamicMotionHistory = []
+      dynamicLock = false
+      movementFrames = 0
+      settledFrames = 0
       return
     }
     if (data.type !== 'frame') return
