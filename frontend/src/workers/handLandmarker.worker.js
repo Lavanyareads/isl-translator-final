@@ -14,8 +14,10 @@ let dynamicSession = null
 let dynamicLabels = []
 let dynamicFrames = 30
 let dynamicHistory = []
+let dynamicMotionHistory = []
 let dynamicModelChecked = false
 let dynamicEnabled = false
+const DYNAMIC_MOTION_THRESHOLD = 0.035
 
 async function initializeStaticModel() {
   if (staticModelChecked) return
@@ -84,6 +86,34 @@ async function predictDynamic(frame) {
   features[127] = Number(frame.rightPresent)
   dynamicHistory.push(features)
   if (dynamicHistory.length > dynamicFrames) dynamicHistory.shift()
+  // The LSTM is trained on wrist-relative coordinates, which intentionally
+  // removes camera position. Keep a separate short raw-coordinate history to
+  // determine whether the user is actually making a moving sign. Without an
+  // IDLE class an LSTM must always choose a label, even for a held A/Z pose.
+  const raw = new Float32Array(126)
+  raw.set(frame.leftRaw, 0)
+  raw.set(frame.rightRaw, 63)
+  dynamicMotionHistory.push(raw)
+  if (dynamicMotionHistory.length > 11) dynamicMotionHistory.shift()
+  if (dynamicMotionHistory.length >= 2) {
+    const older = dynamicMotionHistory[0]
+    let total = 0
+    let points = 0
+    for (let index = 0; index < 42; index += 1) {
+      const offset = index * 3
+      // Empty hands are zero-masked. Do not treat a hand appearing/disappearing
+      // as deliberate sign movement.
+      if (raw[offset] === 0 && raw[offset + 1] === 0) continue
+      if (older[offset] === 0 && older[offset + 1] === 0) continue
+      total += Math.hypot(raw[offset] - older[offset], raw[offset + 1] - older[offset + 1])
+      points += 1
+    }
+    frame.dynamicMotion = points ? total / points : 0
+    frame.dynamicMotionActive = frame.dynamicMotion >= DYNAMIC_MOTION_THRESHOLD
+  } else {
+    frame.dynamicMotion = 0
+    frame.dynamicMotionActive = false
+  }
   frame.dynamicWindowReady = dynamicHistory.length >= dynamicFrames
   // Two LSTM evaluations per second are enough for a 30-frame gesture while
   // preserving a responsive landmark overlay on lower-end phones.
@@ -169,11 +199,13 @@ self.onmessage = async ({ data }) => {
       handLandmarker = undefined
       initialization = undefined
       dynamicHistory = []
+      dynamicMotionHistory = []
       return
     }
     if (data.type === 'set-dynamic-enabled') {
       dynamicEnabled = Boolean(data.enabled)
       dynamicHistory = []
+      dynamicMotionHistory = []
       return
     }
     if (data.type !== 'frame') return
@@ -186,7 +218,13 @@ self.onmessage = async ({ data }) => {
     // transfers the original arrays after ONNX inference completes.
     self.postMessage({
       type: 'landmark-preview',
-      frame: { timestamp: frame.timestamp, leftRaw: frame.leftRaw, rightRaw: frame.rightRaw },
+      frame: {
+        timestamp: frame.timestamp,
+        leftRaw: frame.leftRaw,
+        rightRaw: frame.rightRaw,
+        leftPresent: frame.leftPresent,
+        rightPresent: frame.rightPresent,
+      },
     })
     frame.staticPrediction = await predictStatic(frame)
     frame.dynamicPrediction = dynamicEnabled ? await predictDynamic(frame) : null

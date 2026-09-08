@@ -149,11 +149,12 @@ function App() {
     if (!frame.leftPresent && !frame.rightPresent) return handleNoHand()
     const c = stateRef.current
     c.lastHand = Date.now(); c.wordCommitted = false; c.messageSent = false
+    const movingDynamicSign = c.mode === 'conversation' && dynamicEnabledRef.current && frame.dynamicMotionActive
     if (c.mode === 'conversation' && dynamicEnabledRef.current && frame.dynamicPrediction) {
-      // Both models run on every frame. Fusion gives a confident temporal
-      // prediction priority only after its 30-frame window is warm; otherwise
-      // static-sign predictions continue as the normal fallback.
-      if (frame.dynamicWindowReady && frame.dynamicPrediction.confidence >= 80) {
+      // A dynamic model trained without an IDLE class always returns one of
+      // its labels. It can only take priority when the raw landmark trail
+      // confirms a moving hand, so a held static A–Z sign remains static.
+      if (movingDynamicSign && frame.dynamicWindowReady && frame.dynamicPrediction.confidence >= 80) {
         const dynamic = dynamicRecognizer.current
         const label = frame.dynamicPrediction.label
         dynamic.buffer = [...dynamic.buffer, label].slice(-2)
@@ -166,6 +167,13 @@ function App() {
         }
         return
       }
+    }
+    // While a hand is in motion, wait for its temporal model rather than
+    // committing incidental static poses from the middle of that gesture.
+    // A held static sign falls through immediately once it becomes still.
+    if (movingDynamicSign) {
+      setPrediction('…'); setConfidence(0); setHold(0)
+      return
     }
     if (classifierInFlight.current || performance.now() - lastClassificationAt.current < 180) return
     classifierInFlight.current = true; lastClassificationAt.current = performance.now()
