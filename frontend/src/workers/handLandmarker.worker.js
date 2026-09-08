@@ -15,6 +15,7 @@ let dynamicLabels = []
 let dynamicFrames = 30
 let dynamicHistory = []
 let dynamicModelChecked = false
+let dynamicEnabled = false
 
 async function initializeStaticModel() {
   if (staticModelChecked) return
@@ -84,7 +85,9 @@ async function predictDynamic(frame) {
   dynamicHistory.push(features)
   if (dynamicHistory.length > dynamicFrames) dynamicHistory.shift()
   frame.dynamicWindowReady = dynamicHistory.length >= dynamicFrames
-  if (!frame.dynamicWindowReady || dynamicHistory.length % 5 !== 0) return null
+  // Two LSTM evaluations per second are enough for a 30-frame gesture while
+  // preserving a responsive landmark overlay on lower-end phones.
+  if (!frame.dynamicWindowReady || dynamicHistory.length % 10 !== 0) return null
   const sequence = new Float32Array(dynamicFrames * 128)
   dynamicHistory.forEach((item, index) => sequence.set(item, index * 128))
   const input = new ort.Tensor('float32', sequence, [1, dynamicFrames, 128])
@@ -168,13 +171,25 @@ self.onmessage = async ({ data }) => {
       dynamicHistory = []
       return
     }
+    if (data.type === 'set-dynamic-enabled') {
+      dynamicEnabled = Boolean(data.enabled)
+      dynamicHistory = []
+      return
+    }
     if (data.type !== 'frame') return
     await initialize()
     const result = handLandmarker.detectForVideo(data.bitmap, data.timestamp)
     data.bitmap.close()
     const frame = buildFrame(result, data.timestamp)
+    // Send only the small raw landmark arrays immediately for the canvas.
+    // Do not transfer them: the prediction result below still owns and
+    // transfers the original arrays after ONNX inference completes.
+    self.postMessage({
+      type: 'landmark-preview',
+      frame: { timestamp: frame.timestamp, leftRaw: frame.leftRaw, rightRaw: frame.rightRaw },
+    })
     frame.staticPrediction = await predictStatic(frame)
-    frame.dynamicPrediction = await predictDynamic(frame)
+    frame.dynamicPrediction = dynamicEnabled ? await predictDynamic(frame) : null
     const transfers = [
       frame.leftHand.buffer, frame.rightHand.buffer,
       frame.leftRaw.buffer, frame.rightRaw.buffer,

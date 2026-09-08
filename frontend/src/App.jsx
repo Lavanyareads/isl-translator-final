@@ -202,6 +202,7 @@ function App() {
       stateRef.current.lastHand = Date.now(); setRunning(true); setNotice('')
       landmarkerRef.current ??= new BrowserHandLandmarker({
         onFrame: handleLandmarkFrame,
+        onLandmarks: drawSkeletons,
         onStatus: ({ state, message, labels }) => {
           if (state === 'static-ready') { setStaticReady(true); setNotice(`Static ONNX ready: ${labels.join(', ')}`) }
           if (state === 'dynamic-ready') { setDynamicReady(true); setNotice(`Dynamic LSTM ready: ${labels.join(', ')}`) }
@@ -238,6 +239,7 @@ function App() {
   const toggleDynamicMode = () => {
     const next = !dynamicEnabledRef.current
     dynamicEnabledRef.current = next
+    landmarkerRef.current?.setDynamicEnabled(next)
     dynamicRecognizer.current = { buffer: [], lastAdded: '' }
     setDynamicEnabled(next)
     setPrediction('·'); setConfidence(0); setHold(0); setLastAdded('')
