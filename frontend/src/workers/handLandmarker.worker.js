@@ -10,6 +10,12 @@ let initialization
 let staticSession = null
 let staticLabels = []
 let staticModelChecked = false
+let lastStaticPrediction = null
+let lastStaticPredictionAt = -Infinity
+// Landmark drawing benefits from every sampled MediaPipe frame. Static sign
+// classification does not need to run at camera FPS, and was previously the
+// main cause of the overlay trailing the hand.
+const STATIC_PREDICTION_INTERVAL_MS = 180
 let dynamicSession = null
 let dynamicLabels = []
 let dynamicFrames = 30
@@ -22,7 +28,10 @@ let dynamicEnabled = false
 // small tracking/held-pose jitter. Separate thresholds prevent lock flapping.
 const ENTER_DYNAMIC_MOTION = 0.035
 const EXIT_DYNAMIC_MOTION = 0.015
-const MOTION_PERSISTENCE_FRAMES = 4
+// At the 20 FPS sampling target this is roughly 400 ms of sustained motion.
+// It filters ordinary transitions while someone is changing static signs;
+// the 30-frame LSTM input length remains unchanged because it is model-bound.
+const MOTION_PERSISTENCE_FRAMES = 8
 let dynamicLock = false
 let movementFrames = 0
 let settledFrames = 0
@@ -64,6 +73,14 @@ async function predictStatic(frame) {
   let index = 0
   for (let i = 1; i < values.length; i += 1) if (values[i] > values[index]) index = i
   return { prediction: staticLabels[index] || `CLASS_${index}`, confidence: Math.round(values[index] * 100) }
+}
+
+async function getStaticPrediction(frame) {
+  if (!lastStaticPrediction || frame.timestamp - lastStaticPredictionAt >= STATIC_PREDICTION_INTERVAL_MS) {
+    lastStaticPrediction = await predictStatic(frame)
+    lastStaticPredictionAt = frame.timestamp
+  }
+  return lastStaticPrediction
 }
 
 async function initializeDynamicModel() {
@@ -221,6 +238,8 @@ self.onmessage = async ({ data }) => {
       initialization = undefined
       dynamicHistory = []
       dynamicMotionHistory = []
+      lastStaticPrediction = null
+      lastStaticPredictionAt = -Infinity
       dynamicLock = false
       movementFrames = 0
       settledFrames = 0
@@ -253,7 +272,7 @@ self.onmessage = async ({ data }) => {
         rightPresent: frame.rightPresent,
       },
     })
-    frame.staticPrediction = await predictStatic(frame)
+    frame.staticPrediction = await getStaticPrediction(frame)
     frame.dynamicPrediction = dynamicEnabled ? await predictDynamic(frame) : null
     const transfers = [
       frame.leftHand.buffer, frame.rightHand.buffer,
