@@ -6,6 +6,13 @@ existing scikit-learn model can continue to run in Python.
 from __future__ import annotations
 
 import os
+import base64
+import hashlib
+import hmac
+import re
+import secrets
+import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import cv2
@@ -13,12 +20,14 @@ import joblib
 import mediapipe as mp
 import numpy as np
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")
+AUTH_DB_PATH = ROOT / "instance" / "sparsh_auth.db"
+AUTH_DB_PATH.parent.mkdir(exist_ok=True)
 
 app = FastAPI(title="S-Sparsh API")
 app.add_middleware(
@@ -59,6 +68,91 @@ class LandmarkRequest(BaseModel):
 class BrowserFeatureRequest(BaseModel):
     """Two normalized hand vectors plus left/right presence masks."""
     features: list[float]
+
+
+class SignUpRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+
+class SignInRequest(BaseModel):
+    identifier: str
+    password: str
+
+
+def auth_db():
+    connection = sqlite3.connect(AUTH_DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def init_auth_db():
+    with auth_db() as connection:
+        connection.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                password_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                expires_at TEXT NOT NULL,
+                FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+        """)
+
+
+def hash_password(password: str, salt: bytes | None = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 310_000)
+    return f"{base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        salt_text, digest_text = stored.split("$", 1)
+        candidate = hash_password(password, base64.b64decode(salt_text)).split("$", 1)[1]
+        return hmac.compare_digest(candidate, digest_text)
+    except (ValueError, TypeError):
+        return False
+
+
+def public_user(row: sqlite3.Row) -> dict:
+    return {"id": row["id"], "username": row["username"], "email": row["email"]}
+
+
+def create_session(user_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    expires_at = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+    with auth_db() as connection:
+        connection.execute(
+            "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+            (hashlib.sha256(token.encode()).hexdigest(), user_id, expires_at),
+        )
+    return token
+
+
+def authenticated_user(authorization: str | None) -> sqlite3.Row:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Please sign in to continue.")
+    token_hash = hashlib.sha256(authorization.removeprefix("Bearer ").encode()).hexdigest()
+    with auth_db() as connection:
+        connection.execute("DELETE FROM sessions WHERE expires_at <= ?", (datetime.now(timezone.utc).isoformat(),))
+        user = connection.execute("""
+            SELECT users.id, users.username, users.email FROM sessions
+            JOIN users ON users.id = sessions.user_id
+            WHERE sessions.token_hash = ?
+        """, (token_hash,)).fetchone()
+    if user is None:
+        raise HTTPException(401, "Your session has expired. Please sign in again.")
+    return user
+
+
+init_auth_db()
 
 
 def get_browser_static_model():
@@ -102,6 +196,56 @@ def clean_isl_gloss(text: str) -> str:
 @app.get("/api/health")
 def health():
     return {"modelReady": model is not None, "modelError": model_error}
+
+
+@app.post("/api/auth/signup", status_code=201)
+def signup(payload: SignUpRequest):
+    username = payload.username.strip()
+    email = payload.email.strip().lower()
+    if not re.fullmatch(r"[A-Za-z0-9_]{3,30}", username):
+        raise HTTPException(422, "Username must be 3–30 letters, numbers, or underscores.")
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise HTTPException(422, "Enter a valid email address.")
+    if len(payload.password) < 8:
+        raise HTTPException(422, "Password must contain at least 8 characters.")
+    try:
+        with auth_db() as connection:
+            cursor = connection.execute(
+                "INSERT INTO users (username, email, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                (username, email, hash_password(payload.password), datetime.now(timezone.utc).isoformat()),
+            )
+            user_id = cursor.lastrowid
+            user = connection.execute("SELECT id, username, email FROM users WHERE id = ?", (user_id,)).fetchone()
+    except sqlite3.IntegrityError as error:
+        message = "That username is already taken." if "username" in str(error).lower() else "An account already uses that email address."
+        raise HTTPException(409, message) from error
+    return {"message": "Account created. Please sign in.", "user": public_user(user)}
+
+
+@app.post("/api/auth/signin")
+def signin(payload: SignInRequest):
+    identifier = payload.identifier.strip()
+    with auth_db() as connection:
+        user = connection.execute(
+            "SELECT * FROM users WHERE email = ? OR username = ?", (identifier.lower(), identifier)
+        ).fetchone()
+    if user is None or not verify_password(payload.password, user["password_hash"]):
+        raise HTTPException(401, "Incorrect email/username or password.")
+    return {"token": create_session(user["id"]), "user": public_user(user)}
+
+
+@app.get("/api/auth/me")
+def current_user(authorization: str | None = Header(default=None)):
+    return {"user": public_user(authenticated_user(authorization))}
+
+
+@app.post("/api/auth/signout")
+def signout(authorization: str | None = Header(default=None)):
+    if authorization and authorization.startswith("Bearer "):
+        token_hash = hashlib.sha256(authorization.removeprefix("Bearer ").encode()).hexdigest()
+        with auth_db() as connection:
+            connection.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+    return {"message": "Signed out."}
 
 
 @app.post("/api/predict")
