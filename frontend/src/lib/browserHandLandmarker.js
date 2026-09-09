@@ -9,8 +9,9 @@ const MAX_INFERENCE_SIDE = 640
  * the component tree render for each video frame.
  */
 export class BrowserHandLandmarker {
-  constructor({ onFrame, onStatus, targetFps = DEFAULT_FPS, sequenceLength = 30 }) {
+  constructor({ onFrame, onLandmarks, onStatus, targetFps = DEFAULT_FPS, sequenceLength = 30 }) {
     this.onFrame = onFrame
+    this.onLandmarks = onLandmarks
     this.onStatus = onStatus
     this.interval = 1000 / targetFps
     this.buffer = new TemporalLandmarkBuffer(sequenceLength)
@@ -30,6 +31,11 @@ export class BrowserHandLandmarker {
     if (data.type === 'dynamic-ready') this.onStatus?.({ state: 'dynamic-ready', labels: data.labels })
     if (data.type === 'dynamic-unavailable') this.onStatus?.({ state: 'dynamic-unavailable', message: data.message })
     if (data.type === 'error') this.onStatus?.({ state: 'error', message: data.message })
+    if (data.type === 'landmark-preview') {
+      // This arrives immediately after MediaPipe. Keeping it separate from
+      // model output lets the canvas stay responsive while ONNX is running.
+      this.onLandmarks?.(data.frame)
+    }
     if (data.type === 'landmarks') {
       this.inFlight = false
       this.buffer.push(data.frame)
@@ -41,6 +47,10 @@ export class BrowserHandLandmarker {
     this.video = video
     this.running = true
     this.schedule()
+  }
+
+  setDynamicEnabled(enabled) {
+    this.worker.postMessage({ type: 'set-dynamic-enabled', enabled })
   }
 
   schedule() {

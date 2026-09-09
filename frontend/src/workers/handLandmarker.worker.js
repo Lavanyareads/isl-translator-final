@@ -10,11 +10,31 @@ let initialization
 let staticSession = null
 let staticLabels = []
 let staticModelChecked = false
+let lastStaticPrediction = null
+let lastStaticPredictionAt = -Infinity
+// Landmark drawing benefits from every sampled MediaPipe frame. Static sign
+// classification does not need to run at camera FPS, and was previously the
+// main cause of the overlay trailing the hand.
+const STATIC_PREDICTION_INTERVAL_MS = 180
 let dynamicSession = null
 let dynamicLabels = []
 let dynamicFrames = 30
 let dynamicHistory = []
+let dynamicMotionHistory = []
 let dynamicModelChecked = false
+let dynamicEnabled = false
+// Raw MediaPipe image coordinates are 0–1. Averaging 21 joints over the
+// existing ~10-frame trail makes 0.035 a deliberate gesture, while 0.015 is
+// small tracking/held-pose jitter. Separate thresholds prevent lock flapping.
+const ENTER_DYNAMIC_MOTION = 0.035
+const EXIT_DYNAMIC_MOTION = 0.015
+// At the 20 FPS sampling target this is roughly 400 ms of sustained motion.
+// It filters ordinary transitions while someone is changing static signs;
+// the 30-frame LSTM input length remains unchanged because it is model-bound.
+const MOTION_PERSISTENCE_FRAMES = 8
+let dynamicLock = false
+let movementFrames = 0
+let settledFrames = 0
 
 async function initializeStaticModel() {
   if (staticModelChecked) return
@@ -55,6 +75,14 @@ async function predictStatic(frame) {
   return { prediction: staticLabels[index] || `CLASS_${index}`, confidence: Math.round(values[index] * 100) }
 }
 
+async function getStaticPrediction(frame) {
+  if (!lastStaticPrediction || frame.timestamp - lastStaticPredictionAt >= STATIC_PREDICTION_INTERVAL_MS) {
+    lastStaticPrediction = await predictStatic(frame)
+    lastStaticPredictionAt = frame.timestamp
+  }
+  return lastStaticPrediction
+}
+
 async function initializeDynamicModel() {
   if (dynamicModelChecked) return
   dynamicModelChecked = true
@@ -83,8 +111,51 @@ async function predictDynamic(frame) {
   features[127] = Number(frame.rightPresent)
   dynamicHistory.push(features)
   if (dynamicHistory.length > dynamicFrames) dynamicHistory.shift()
+  // The LSTM is trained on wrist-relative coordinates, which intentionally
+  // removes camera position. Keep a separate short raw-coordinate history to
+  // determine whether the user is actually making a moving sign. Without an
+  // IDLE class an LSTM must always choose a label, even for a held A/Z pose.
+  const raw = new Float32Array(126)
+  raw.set(frame.leftRaw, 0)
+  raw.set(frame.rightRaw, 63)
+  dynamicMotionHistory.push(raw)
+  if (dynamicMotionHistory.length > 11) dynamicMotionHistory.shift()
+  if (dynamicMotionHistory.length >= 2) {
+    const older = dynamicMotionHistory[0]
+    let total = 0
+    let points = 0
+    for (let index = 0; index < 42; index += 1) {
+      const offset = index * 3
+      // Empty hands are zero-masked. Do not treat a hand appearing/disappearing
+      // as deliberate sign movement.
+      if (raw[offset] === 0 && raw[offset + 1] === 0) continue
+      if (older[offset] === 0 && older[offset + 1] === 0) continue
+      total += Math.hypot(raw[offset] - older[offset], raw[offset + 1] - older[offset + 1])
+      points += 1
+    }
+    frame.dynamicMotion = points ? total / points : 0
+  } else {
+    frame.dynamicMotion = 0
+  }
+  if (!dynamicLock) {
+    movementFrames = frame.dynamicMotion >= ENTER_DYNAMIC_MOTION ? movementFrames + 1 : 0
+    if (movementFrames >= MOTION_PERSISTENCE_FRAMES) {
+      dynamicLock = true
+      settledFrames = 0
+    }
+  } else {
+    settledFrames = frame.dynamicMotion <= EXIT_DYNAMIC_MOTION ? settledFrames + 1 : 0
+    if (settledFrames >= MOTION_PERSISTENCE_FRAMES) {
+      dynamicLock = false
+      movementFrames = 0
+    }
+  }
+  frame.dynamicLock = dynamicLock
+  frame.dynamicMotionActive = dynamicLock
   frame.dynamicWindowReady = dynamicHistory.length >= dynamicFrames
-  if (!frame.dynamicWindowReady || dynamicHistory.length % 5 !== 0) return null
+  // Two LSTM evaluations per second are enough for a 30-frame gesture while
+  // preserving a responsive landmark overlay on lower-end phones.
+  if (!frame.dynamicWindowReady || dynamicHistory.length % 10 !== 0) return null
   const sequence = new Float32Array(dynamicFrames * 128)
   dynamicHistory.forEach((item, index) => sequence.set(item, index * 128))
   const input = new ort.Tensor('float32', sequence, [1, dynamicFrames, 128])
@@ -166,6 +237,21 @@ self.onmessage = async ({ data }) => {
       handLandmarker = undefined
       initialization = undefined
       dynamicHistory = []
+      dynamicMotionHistory = []
+      lastStaticPrediction = null
+      lastStaticPredictionAt = -Infinity
+      dynamicLock = false
+      movementFrames = 0
+      settledFrames = 0
+      return
+    }
+    if (data.type === 'set-dynamic-enabled') {
+      dynamicEnabled = Boolean(data.enabled)
+      dynamicHistory = []
+      dynamicMotionHistory = []
+      dynamicLock = false
+      movementFrames = 0
+      settledFrames = 0
       return
     }
     if (data.type !== 'frame') return
@@ -173,8 +259,21 @@ self.onmessage = async ({ data }) => {
     const result = handLandmarker.detectForVideo(data.bitmap, data.timestamp)
     data.bitmap.close()
     const frame = buildFrame(result, data.timestamp)
-    frame.staticPrediction = await predictStatic(frame)
-    frame.dynamicPrediction = await predictDynamic(frame)
+    // Send only the small raw landmark arrays immediately for the canvas.
+    // Do not transfer them: the prediction result below still owns and
+    // transfers the original arrays after ONNX inference completes.
+    self.postMessage({
+      type: 'landmark-preview',
+      frame: {
+        timestamp: frame.timestamp,
+        leftRaw: frame.leftRaw,
+        rightRaw: frame.rightRaw,
+        leftPresent: frame.leftPresent,
+        rightPresent: frame.rightPresent,
+      },
+    })
+    frame.staticPrediction = await getStaticPrediction(frame)
+    frame.dynamicPrediction = dynamicEnabled ? await predictDynamic(frame) : null
     const transfers = [
       frame.leftHand.buffer, frame.rightHand.buffer,
       frame.leftRaw.buffer, frame.rightRaw.buffer,

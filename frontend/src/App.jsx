@@ -24,7 +24,7 @@ function App() {
   const classifierInFlight = useRef(false)
   const lastClassificationAt = useRef(0)
   const dynamicEnabledRef = useRef(false)
-  const dynamicRecognizer = useRef({ buffer: [], lastAdded: '' })
+  const dynamicRecognizer = useRef({ buffer: [], lastAdded: '', wasLocked: false, cooldownUntil: 0 })
   const recognizer = useRef({ buffer: [], previous: null, count: 0, lastAdded: '' })
   const stateRef = useRef({ mode: 'learning', word: '', buffer: '', lastHand: Date.now(), wordCommitted: true, messageSent: true })
   const [mode, setMode] = useState('learning')
@@ -117,12 +117,13 @@ function App() {
     try {
       const response = await fetch(`${API}/translate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: raw }) })
       const message = await response.json()
-      setChat(items => [...items, { sender: 'isl', ...message, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }])
+      // English is always the primary chat line; Marathi is supplemental.
+      setChat(items => [...items, { sender: 'isl', text: message.cleaned || raw, marathi: message.marathi || '', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }])
     } catch { setNotice('Could not finalize the signed message. Check the API server.') }
   }
 
   const handleNoHand = () => {
-    dynamicRecognizer.current = { buffer: [], lastAdded: '' }
+    dynamicRecognizer.current = { buffer: [], lastAdded: '', wasLocked: false, cooldownUntil: 0 }
     const canvas = overlayRef.current
     canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height)
     recognizer.current = { ...recognizer.current, buffer: [], previous: null, count: 0, lastAdded: '' }
@@ -148,12 +149,27 @@ function App() {
     if (!frame.leftPresent && !frame.rightPresent) return handleNoHand()
     const c = stateRef.current
     c.lastHand = Date.now(); c.wordCommitted = false; c.messageSent = false
-    if (c.mode === 'conversation' && dynamicEnabledRef.current && frame.dynamicPrediction) {
-      // Both models run on every frame. Fusion gives a confident temporal
-      // prediction priority only after its 30-frame window is warm; otherwise
-      // static-sign predictions continue as the normal fallback.
-      if (frame.dynamicWindowReady && frame.dynamicPrediction.confidence >= 80) {
-        const dynamic = dynamicRecognizer.current
+    const dynamic = dynamicRecognizer.current
+    const dynamicActive = c.mode === 'conversation' && dynamicEnabledRef.current
+    const dynamicLocked = dynamicActive && frame.dynamicLock
+    if (dynamic.wasLocked && !dynamicLocked) {
+      // Returning to static recognition must not re-commit the last temporal
+      // label after the user's hand settles.
+      dynamic.cooldownUntil = Date.now() + 400
+      dynamic.buffer = []
+      dynamic.lastAdded = ''
+    }
+    if (!dynamic.wasLocked && dynamicLocked) {
+      // Discard an LSTM label accumulated while the hand was held still.
+      dynamic.buffer = []
+      dynamic.lastAdded = ''
+    }
+    dynamic.wasLocked = dynamicLocked
+    if (dynamicActive && frame.dynamicPrediction) {
+      // The LSTM has no IDLE class, so it is never trusted for a held pose.
+      // It needs a hysteresis lock, a ready window, >=75% confidence, and two
+      // matching temporal predictions before it can replace static output.
+      if (dynamicLocked && Date.now() >= dynamic.cooldownUntil && frame.dynamicWindowReady && frame.dynamicPrediction.confidence >= 75) {
         const label = frame.dynamicPrediction.label
         dynamic.buffer = [...dynamic.buffer, label].slice(-2)
         const stable = dynamic.buffer.length === 2 && dynamic.buffer.every(item => item === label)
@@ -165,6 +181,14 @@ function App() {
         }
         return
       }
+      if (dynamicLocked) dynamic.buffer = []
+    }
+    // While a hand is in motion, wait for its temporal model rather than
+    // committing incidental static poses from the middle of that gesture.
+    // A held static sign falls through immediately once it becomes still.
+    if (dynamicLocked) {
+      setPrediction('…'); setConfidence(0); setHold(0)
+      return
     }
     if (classifierInFlight.current || performance.now() - lastClassificationAt.current < 180) return
     classifierInFlight.current = true; lastClassificationAt.current = performance.now()
@@ -202,6 +226,7 @@ function App() {
       stateRef.current.lastHand = Date.now(); setRunning(true); setNotice('')
       landmarkerRef.current ??= new BrowserHandLandmarker({
         onFrame: handleLandmarkFrame,
+        onLandmarks: drawSkeletons,
         onStatus: ({ state, message, labels }) => {
           if (state === 'static-ready') { setStaticReady(true); setNotice(`Static ONNX ready: ${labels.join(', ')}`) }
           if (state === 'dynamic-ready') { setDynamicReady(true); setNotice(`Dynamic LSTM ready: ${labels.join(', ')}`) }
@@ -238,7 +263,8 @@ function App() {
   const toggleDynamicMode = () => {
     const next = !dynamicEnabledRef.current
     dynamicEnabledRef.current = next
-    dynamicRecognizer.current = { buffer: [], lastAdded: '' }
+    landmarkerRef.current?.setDynamicEnabled(next)
+    dynamicRecognizer.current = { buffer: [], lastAdded: '', wasLocked: false, cooldownUntil: 0 }
     setDynamicEnabled(next)
     setPrediction('·'); setConfidence(0); setHold(0); setLastAdded('')
     setNotice(next ? 'Dynamic assist is active. Static and dynamic models run together; confident sequence predictions take priority.' : 'Static sign classifier is active.')
@@ -249,11 +275,11 @@ function App() {
     <header><div className="brand"><span className="logo">🤟</span><div><h1>S-स्पर्श</h1><p>Indian Sign Language · Real-time AI Translation</p></div></div><div className="pills"><span className="pill live">● {mode === 'learning' ? 'Learning Mode' : 'Conversation Mode'}</span><span className="pill">MediaPipe · {staticReady ? 'Local ONNX' : 'Groq'}</span></div></header>
     <aside><label className="section">Mode</label><button className={mode === 'learning' ? 'selected' : ''} onClick={() => switchMode('learning')}>🎓 Learning Mode</button><button className={mode === 'conversation' ? 'selected' : ''} onClick={() => switchMode('conversation')}>💬 Conversation Mode</button><p className="hint">{mode === 'learning' ? 'Use SPACE, COMMA and FULLSTOP signs to build your sentence.' : 'Pause between words. A longer pause sends the signed message.'}</p><label className="section">Display</label><button onClick={() => setDark(!dark)}>{dark ? '☀️ Light mode' : '🌙 Dark mode'}</button><label className="section">Camera</label><button className={running ? 'danger' : 'primary'} onClick={running ? stopCamera : startCamera}>{running ? '■ Stop camera' : '▶ Start camera'}</button>
     {mode === 'learning' ? <><label className="section">Actions</label><button className="primary" onClick={translate}>⚡ Translate</button><label className="section">Voice output</label><button onClick={() => speak(output.cleaned, 'en-US')}>🔊 Speak English</button><button onClick={() => speak(output.marathi, 'mr-IN')}>🔊 मराठी ऐका</button><button className="danger" onClick={resetCapture}>✕ Clear session</button></> : <><label className="section">Dynamic signs</label><button disabled={!dynamicReady} className={dynamicEnabled ? 'selected' : ''} onClick={toggleDynamicMode}>{dynamicReady ? `${dynamicEnabled ? '✓ Dynamic assist active' : '○ Enable Dynamic assist'}` : 'Dynamic LSTM not exported'}</button><p className="hint">Static classifier stays active. A confident 30-frame LSTM result takes priority for motion signs.</p><label className="section">Timing</label><label className="range">Word pause: {wordPause.toFixed(1)}s<input type="range" min="0.5" max="3" step="0.1" value={wordPause} onChange={e => setWordPause(+e.target.value)} /></label><label className="range">Message pause: {messagePause.toFixed(1)}s<input type="range" min="3" max="10" step="0.5" value={messagePause} onChange={e => setMessagePause(+e.target.value)} /></label><button className="danger" onClick={() => { setChat([]); resetCapture() }}>🗑 Clear chat</button></>}</aside>
-    <main>{notice && <div className="notice">{notice}</div>}<section className="feed"><div className="camera"><video ref={videoRef} className={running ? '' : 'camera-video-hidden'} muted playsInline /><canvas ref={overlayRef} className={running ? 'hand-overlay' : 'camera-video-hidden'} />{!running && <div className="placeholder"><b>{mode === 'learning' ? '🤟' : '💬'}</b><span>Start the camera to begin</span></div>}<i className="corner one"/><i className="corner two"/><i className="corner three"/><i className="corner four"/></div>{mode === 'learning' ? <Learning sentence={sentence} word={currentWord} prediction={prediction} hold={hold} confidence={confidence} lastAdded={lastAdded} output={output} stats={stats} /> : <Conversation chat={chat} reply={reply} setReply={setReply} sendReply={sendReply} lastReply={lastReply} prediction={prediction} word={currentWord} elapsed={elapsed} wordPause={wordPause} messagePause={messagePause} />}</section></main>
+    <main>{notice && <div className="notice">{notice}</div>}<section className={`feed ${mode === 'conversation' ? 'conversation-feed' : ''}`}><div className="camera"><video ref={videoRef} className={running ? '' : 'camera-video-hidden'} muted playsInline /><canvas ref={overlayRef} className={running ? 'hand-overlay' : 'camera-video-hidden'} />{!running && <div className="placeholder"><b>{mode === 'learning' ? '🤟' : '💬'}</b><span>Start the camera to begin</span></div>}<i className="corner one"/><i className="corner two"/><i className="corner three"/><i className="corner four"/></div>{mode === 'learning' ? <Learning sentence={sentence} word={currentWord} prediction={prediction} hold={hold} confidence={confidence} lastAdded={lastAdded} output={output} stats={stats} /> : <Conversation chat={chat} reply={reply} setReply={setReply} sendReply={sendReply} lastReply={lastReply} prediction={prediction} word={currentWord} elapsed={elapsed} wordPause={wordPause} messagePause={messagePause} />}</section></main>
   </div>
 }
 
 function Learning({ sentence, word, prediction, hold, confidence, lastAdded, output, stats }) { return <div className="learning"><div className="metric"><span>Confidence</span><div><i style={{ width: `${confidence}%` }} /></div><b>{confidence}%</b></div><div className="hold"><strong>{prediction}</strong><div><span>Hold to register · {hold}%</span><div><i style={{ width: `${hold}%` }} /></div></div></div><div className="cards"><Card label="Current word" value={word || '…'} /><Card label="Last added sign" value={lastAdded || '…'} violet /></div><Card label="Raw capture" value={<div className="chips">{[...sentence, ...word].map((char, i) => char === ' ' ? <span key={i} className="gap"/> : <span key={i} className={i < sentence.length ? 'done' : ''}>{char}</span>)}{!sentence && !word && <em>Waiting for input…</em>}</div>} /><div className="output"><Card label="English" value={output.cleaned || 'Translate via the sidebar →'} /><Card label="मराठी" value={output.marathi || 'मराठी भाषांतर येथे दिसेल'} /></div><div className="stats"><Card label="Signs detected" value={stats.signs} /><Card label="Words formed" value={stats.words} /></div></div> }
-function Conversation({ chat, reply, setReply, sendReply, lastReply, prediction, word, elapsed, wordPause, messagePause }) { return <div className="conversation"><div className="signer">{lastReply ? <><small>📱 Show this to the signer</small><strong>{lastReply}</strong></> : 'Your typed replies will appear here large enough to show the signer.'}</div><div className="cards"><Card label="Detecting" value={prediction} /><Card label="Building word" value={word || '…'} violet /></div><p className="pause">No hand for {elapsed}s · word at {wordPause.toFixed(1)}s · message at {messagePause.toFixed(1)}s</p><div className="chat"><label>Conversation</label>{chat.length ? chat.map((message, i) => <div key={i} className={`message ${message.sender}`}><small>{message.sender === 'you' ? 'You' : 'ISL'} · {message.time}</small><div>{message.text}{message.marathi && <span>{message.marathi}</span>}</div></div>) : <em>Signed and typed messages will appear here.</em>}<form onSubmit={sendReply}><input value={reply} onChange={e => setReply(e.target.value)} placeholder="Type a reply…"/><button>Send →</button></form></div></div> }
+function Conversation({ chat, reply, setReply, sendReply, lastReply, prediction, word, elapsed, wordPause, messagePause }) { return <div className="conversation"><div className="signer">{lastReply ? <><small>📱 Show this to the signer</small><strong>{lastReply}</strong></> : 'Your typed replies will appear here large enough to show the signer.'}</div><div className="cards"><Card label="Detecting" value={prediction} /><Card label="Building word" value={word || '…'} violet /></div><p className="pause">No hand for {elapsed}s · word at {wordPause.toFixed(1)}s · message at {messagePause.toFixed(1)}s</p><div className="chat"><label>Conversation</label>{chat.length ? chat.map((message, i) => <div key={i} className={`message ${message.sender}`}><small>{message.sender === 'you' ? 'You' : 'ISL'} · {message.time}</small><div><strong className="english-line">{message.text}</strong>{message.marathi && <span><small>मराठी</small>{message.marathi}</span>}</div></div>) : <em>Signed and typed messages will appear here.</em>}<form onSubmit={sendReply}><input value={reply} onChange={e => setReply(e.target.value)} placeholder="Type a reply…"/><button>Send →</button></form></div></div> }
 function Card({ label, value, violet }) { return <div className={`card ${violet ? 'violet' : ''}`}><small>{label}</small><div>{value}</div></div> }
 export default App
