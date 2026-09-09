@@ -9,9 +9,11 @@ import os
 import base64
 import hashlib
 import hmac
+import json
 import re
 import secrets
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -68,6 +70,18 @@ class LandmarkRequest(BaseModel):
 class BrowserFeatureRequest(BaseModel):
     """Two normalized hand vectors plus left/right presence masks."""
     features: list[float]
+
+
+class StaticRecordingRequest(BaseModel):
+    """A labelled browser-landmark recording collected from collector.html."""
+    label: str
+    frames: list[dict]
+
+
+class DynamicSequenceRequest(BaseModel):
+    """One labelled temporal sequence collected from dynamic-collector.html."""
+    label: str
+    frames: list[dict]
 
 
 class SignUpRequest(BaseModel):
@@ -298,6 +312,52 @@ def classify_browser_static(payload: BrowserFeatureRequest):
     if hasattr(classifier, "predict_proba"):
         confidence = float(np.max(classifier.predict_proba(features)[0]))
     return {"prediction": prediction, "confidence": round(confidence * 100), "source": "browser-static"}
+
+
+def validate_browser_frames(frames: list[dict]) -> None:
+    for frame in frames:
+        if len(frame.get("leftHand", [])) != 63 or len(frame.get("rightHand", [])) != 63:
+            raise HTTPException(422, "Every frame must contain two 63-value hand vectors.")
+
+
+@app.post("/api/datasets/static")
+def save_static_recording(payload: StaticRecordingRequest):
+    """Store browser-collected static landmarks without changing existing APIs."""
+    label = payload.label.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_]+", label):
+        raise HTTPException(422, "Label may contain only A-Z, 0-9, and underscores.")
+    if not 1 <= len(payload.frames) <= 2_000:
+        raise HTTPException(422, "A static recording must contain 1 to 2,000 frames.")
+    validate_browser_frames(payload.frames)
+    destination = ROOT / "dataset" / "static" / label
+    destination.mkdir(parents=True, exist_ok=True)
+    filename = destination / f"recording_{time.time_ns()}.json"
+    filename.write_text(json.dumps({
+        "schemaVersion": 1, "kind": "static", "label": label,
+        "capturedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "frames": payload.frames,
+    }), encoding="utf-8")
+    return {"saved": len(payload.frames), "path": str(filename.relative_to(ROOT))}
+
+
+@app.post("/api/datasets/dynamic")
+def save_dynamic_sequence(payload: DynamicSequenceRequest):
+    """Store one temporal recording for Lavanya's LSTM training workflow."""
+    label = payload.label.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_]+", label):
+        raise HTTPException(422, "Label may contain only A-Z, 0-9, and underscores.")
+    if not 2 <= len(payload.frames) <= 300:
+        raise HTTPException(422, "A dynamic sequence must contain 2 to 300 frames.")
+    validate_browser_frames(payload.frames)
+    destination = ROOT / "dataset" / "dynamic" / label / f"sequence_{time.time_ns()}"
+    destination.mkdir(parents=True, exist_ok=False)
+    filename = destination / "landmarks.json"
+    filename.write_text(json.dumps({
+        "schemaVersion": 1, "kind": "dynamic", "label": label,
+        "capturedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "frames": payload.frames,
+    }), encoding="utf-8")
+    return {"saved": len(payload.frames), "path": str(filename.relative_to(ROOT))}
 
 
 @app.post("/api/translate")

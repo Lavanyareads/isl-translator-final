@@ -26,6 +26,9 @@ export class BrowserHandLandmarker {
 
   handleWorkerMessage(data) {
     if (data.type === 'ready') this.onStatus?.({ state: 'ready' })
+    if (data.type === 'static-ready') this.onStatus?.({ state: 'static-ready', labels: data.labels })
+    if (data.type === 'dynamic-ready') this.onStatus?.({ state: 'dynamic-ready', labels: data.labels })
+    if (data.type === 'dynamic-unavailable') this.onStatus?.({ state: 'dynamic-unavailable', message: data.message })
     if (data.type === 'error') this.onStatus?.({ state: 'error', message: data.message })
     if (data.type === 'landmarks') {
       this.inFlight = false
@@ -87,5 +90,10 @@ export class BrowserHandLandmarker {
     this.stop()
     this.worker.postMessage({ type: 'close' })
     this.worker.terminate()
+  }
+
+  setDynamicEnabled(enabled) {
+    this.buffer.clear()
+    this.worker.postMessage({ type: 'set-dynamic-enabled', enabled: Boolean(enabled) })
   }
 }

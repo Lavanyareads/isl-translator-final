@@ -8,6 +8,7 @@ export const SIGN_TYPES = {
   COMMA: 'command',
   FULLSTOP: 'command',
   HELLO: 'word',
+  INDIAN: 'word',
   BYE: 'word',
   FINE: 'word',
   KNOW: 'word',

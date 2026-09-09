@@ -21,3 +21,7 @@ frontend/dist/
 # Locally collected browser landmark recordings
 dataset/static/**/*.json
 dataset/dynamic/**/*.json
+
+# Generated browser-ready model artifacts
+frontend/public/models/*.onnx
+frontend/public/models/*.labels.json

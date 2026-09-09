@@ -21,9 +21,6 @@ const LEVELS = [
 ]
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
 
-const progressKey = 'sparsh-learning-progress'
-
-
 function speak(text, lang) {
   if (!text) return
   window.speechSynthesis.cancel()
@@ -286,19 +283,11 @@ function App() {
   const [lastAdded, setLastAdded] = useState('')
   const [output, setOutput] = useState({ cleaned: '', marathi: '' })
   const [stats, setStats] = useState({ signs: 0, words: 0 })
-  const [wordPause, setWordPause] = useState(1.5)
-  const [messagePause, setMessagePause] = useState(6)
-  const [chat, setChat] = useState([])
-  const [reply, setReply] = useState('')
-  const [lastReply, setLastReply] = useState({ text: '', marathi: '' })
+  
   const [notice, setNotice] = useState('')
   const [learningView, setLearningView] = useState('path')
   const [learningPage, setLearningPage] = useState('choose')
-  const [appPage, setAppPage] = useState(() => {
-  return localStorage.getItem('sparsh-auth-token')
-    ? 'welcome'
-    : 'landing'
-})
+  const [appPage, setAppPage] = useState('landing')
   const [authKind, setAuthKind] = useState('signin')
   const [authNotice, setAuthNotice] = useState('')
   const [activeLevel, setActiveLevel] = useState(null)
@@ -312,10 +301,12 @@ const [currentUser, setCurrentUser] = useState(() => {
 })
 
 const [learnedSigns, setLearnedSigns] = useState([])
+const [learningProgressUser, setLearningProgressUser] = useState(null)
 
 useEffect(() => {
   if (!currentUser) {
     setLearnedSigns([])
+    setLearningProgressUser(null)
     return
   }
 
@@ -326,17 +317,20 @@ useEffect(() => {
   } catch {
     setLearnedSigns([])
   }
+  setLearningProgressUser(currentUser.username)
 }, [currentUser])
 
-const competeProgressKey = 'sparsh-compete-progress'
-
 const [competePassedSigns, setCompetePassedSigns] = useState(() => {
+  const username = currentUser?.username
+  if (!username) return []
+
   try {
-    return JSON.parse(localStorage.getItem(competeProgressKey)) || []
+    return JSON.parse(localStorage.getItem(`sparsh-compete-progress-${username}`)) || []
   } catch {
     return []
   }
 })
+const [competeProgressUser, setCompeteProgressUser] = useState(null)
 
 const [competeTarget, setCompeteTarget] = useState('A')
 
@@ -349,10 +343,14 @@ const [practiceFeedback, setPracticeFeedback] = useState('')
     if (!token) return
     fetch(`${API}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
       .then(response => response.ok ? response.json() : Promise.reject())
-      .then(() => setAppPage('welcome'))
+      .then(user => {
+        setCurrentUser(user)
+      })
       .catch(() => {
         localStorage.removeItem('sparsh-auth-token')
         localStorage.removeItem('sparsh-user')
+        setCurrentUser(null)
+        setAppPage('landing')
       })
   }, [])
 
@@ -366,19 +364,41 @@ const [practiceFeedback, setPracticeFeedback] = useState('')
   useEffect(() => { stateRef.current.mode = mode }, [mode])
   useEffect(() => { stateRef.current.word = currentWord }, [currentWord])
   useEffect(() => { stateRef.current.buffer = sentence }, [sentence])
-  useEffect(() => {
-  if (!currentUser) return
+useEffect(() => {
+  if (!currentUser || learningProgressUser !== currentUser.username) return
 
   const userKey = `sparsh-learning-progress-${currentUser.username}`
 
   localStorage.setItem(userKey, JSON.stringify(learnedSigns))
-}, [learnedSigns, currentUser])
+}, [learnedSigns, learningProgressUser, currentUser])
+
   useEffect(() => {
+    const username = currentUser?.username
+    if (!username) {
+      setCompetePassedSigns([])
+      setCompeteProgressUser(null)
+      return
+    }
+
+    try {
+      setCompetePassedSigns(
+        JSON.parse(localStorage.getItem(`sparsh-compete-progress-${username}`)) || []
+      )
+    } catch {
+      setCompetePassedSigns([])
+    }
+    setCompeteProgressUser(username)
+  }, [currentUser])
+
+  useEffect(() => {
+  const username = currentUser?.username
+  if (!username || competeProgressUser !== username) return
+
   localStorage.setItem(
-    competeProgressKey,
+    `sparsh-compete-progress-${username}`,
     JSON.stringify(competePassedSigns)
   )
-}, [competePassedSigns])
+}, [competePassedSigns, competeProgressUser, currentUser])
 
   useEffect(() => {
     if (mode !== 'learning' || !activeLesson || !activeLevel || lastAdded !== activeLesson.sign) return
@@ -406,16 +426,7 @@ const [practiceFeedback, setPracticeFeedback] = useState('')
   }
 
   const addConfirmedSign = (letter) => {
-    const capture = stateRef.current
-
-    if (capture.mode === 'conversation') {
-      if (isWordSign(letter)) {
-        setSentence(value => value + letter + ' ')
-      } else if (!ignoredInConversation.has(letter)) {
-        setCurrentWord(value => value + letter)
-      }
-      return
-    }
+  
 
     setStats(value => ({ ...value, signs: value.signs + 1 }))
 
@@ -442,25 +453,7 @@ const [practiceFeedback, setPracticeFeedback] = useState('')
     }
   }
 
-  const finalizeConversation = async (raw) => {
-    try {
-      const response = await fetch(`${API}/translate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: raw }),
-      })
-      const message = await response.json()
-
-      setChat(items => [...items, {
-        sender: 'isl',
-        text: message.cleaned || message.text || '',
-        marathi: message.marathi || '',
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }])
-    } catch {
-      setNotice('Could not finalize the signed message. Check the API server.')
-    }
-  }
+  
 
   const handleNoHand = () => {
     recognizer.current = { ...recognizer.current, buffer: [], previous: null, count: 0, lastAdded: '' }
@@ -469,24 +462,9 @@ const [practiceFeedback, setPracticeFeedback] = useState('')
     setConfidence(0)
     setLastAdded('')
 
-    const c = stateRef.current
-    const elapsed = (Date.now() - c.lastHand) / 1000
+    
 
-    if (c.mode === 'conversation') {
-      if (elapsed >= wordPause && !c.wordCommitted && c.word) {
-        setSentence(value => value + c.word + ' ')
-        setCurrentWord('')
-        stateRef.current.wordCommitted = true
-      }
-
-      if (elapsed >= messagePause && !c.messageSent && stateRef.current.buffer.trim()) {
-        const raw = stateRef.current.buffer.trim()
-        setSentence('')
-        stateRef.current.buffer = ''
-        stateRef.current.messageSent = true
-        finalizeConversation(raw)
-      }
-    }
+    
   }
 
   const handleLandmarkFrame = async (frame) => {
@@ -658,7 +636,6 @@ const [practiceFeedback, setPracticeFeedback] = useState('')
     stopCamera()
     resetCapture()
     setMode(next)
-    setLastReply({ text: '', marathi: '' })
     stateRef.current = {
       ...stateRef.current,
       mode: next,
@@ -780,9 +757,9 @@ const handlePreviousLetter = () => {
   }
 
   const enterConversation = () => {
-    switchMode('conversation')
-    setAppPage('workspace')
-  }
+  setMode('conversation')
+  setAppPage('conversation')
+}
 
   const goHome = () => {
     stopCamera()
@@ -796,6 +773,9 @@ const handlePreviousLetter = () => {
   localStorage.removeItem('sparsh-auth-token')
   localStorage.removeItem('sparsh-user')
 
+  setCurrentUser(null)
+  setCompetePassedSigns([])
+  setCompeteProgressUser(null)
   setAppPage('landing')
 }
 
@@ -876,6 +856,8 @@ const handlePreviousLetter = () => {
       />
     )
   }
+
+  
   if (appPage === 'landing') {
   return (
     <LandingPage
@@ -893,6 +875,10 @@ const handlePreviousLetter = () => {
       }}
     />
   )
+}
+
+if (appPage === 'conversation') {
+  return <ConversationMode onBack={() => setAppPage('welcome')} />
 }
 
   if (appPage === 'welcome') {
@@ -969,211 +955,22 @@ const handlePreviousLetter = () => {
     )
   }
 
-  return (
-    <div className="app">
-      <header>
-        <div className="brand">
-          <button className="home-button" onClick={goHome} aria-label="Back to home">⌂</button>
-          <img
-  src="/sparsh-logo.png"
-  alt="Sparsh logo"
-  className="sparsh-logo"
-/>
-          <div className="brand-text">
-            <h1 className="brand-wordmark">S-स्पर्श</h1>
-            <p className="brand-tagline">Indian Sign Language <span className="sep">·</span> Sign → Speech</p>
-          </div>
-        </div>
-
-        <div className="mode-switch" role="tablist" aria-label="Mode">
-          <button
-            role="tab"
-            aria-selected={mode === 'learning'}
-            className={mode === 'learning' ? 'active' : ''}
-            onClick={enterLearning}
-          >
-            Learning
-          </button>
-          <button
-            role="tab"
-            aria-selected={mode === 'conversation'}
-            className={mode === 'conversation' ? 'active' : ''}
-            onClick={enterConversation}
-          >
-            Conversation
-          </button>
-          <span
-            className="mode-thumb"
-            style={{ transform: mode === 'learning' ? 'translateX(0%)' : 'translateX(100%)' }}
-          />
-        </div>
-
-        <div className="header-controls">
-          <div
-            className={`status-pill ${running ? 'live' : health.modelReady ? 'ready' : 'warn'}`}
-            title={health.modelError || ''}
-          >
-            <span className="status-dot" />
-            <span className="status-label">{running ? 'Live' : health.modelReady ? 'Ready' : 'Offline'}</span>
-          </div>
-          <button
-            className="theme-toggle"
-            aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
-            onClick={() => setDark(!dark)}
-          >
-            {dark ? <Icon.sun /> : <Icon.moon />}
-          </button>
-        </div>
-      </header>
-
-      {notice && (
-        <div className="notice" role="status">
-          <span className="notice-dot" />
-          {notice}
-        </div>
-      )}
-
-      <main>
-        <section className={`workspace ${mode}`}>
-          <div className="camera-stage">
-            <div className={`camera-container ${mode === 'conversation' ? 'compact' : ''}`}>
-              <video ref={videoRef} className={running ? '' : 'camera-video-hidden'} muted playsInline />
-
-              {!running ? (
-                <div className="camera-placeholder">
-                  <div className="placeholder-ambient" />
-                  <div className="placeholder-content">
-                    <Icon.camera />
-                    <h3>{mode === 'learning' ? 'Ready to Sign' : 'Ready to Communicate'}</h3>
-                    <p>
-                      {mode === 'learning'
-                        ? 'Position your hands inside the frame and begin signing.'
-                        : 'Start the camera to begin your ISL conversation.'}
-                    </p>
-                    <button className="btn-primary" onClick={startCamera}>
-                      <Icon.play /> Start Camera
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="camera-overlay">
-                    <span className="live-indicator"><i />Live</span>
-                    <button className="btn-stop" aria-label="Stop camera" onClick={stopCamera}>
-                      <Icon.stop />
-                    </button>
-                  </div>
-
-                  <div className="scan-beam" />
-
-                  <div className={`recognition-panel ${lastAdded ? 'confirmed' : ''}`}>
-                    <div className="recognition-display">
-                      <span className="recognition-letter">{prediction}</span>
-                      <div className="recognition-label">{prediction === '·' ? 'No hand' : 'Detected'}</div>
-                    </div>
-
-                    <div className="recognition-metrics">
-                      <div className="metric-row">
-                        <span>Confidence</span>
-                        <b>{confidence}%</b>
-                      </div>
-                      <div className="progress-bar">
-                        <i style={{ width: `${confidence}%` }} />
-                      </div>
-
-                      <div className="metric-row">
-                        <span>Hold to confirm</span>
-                        <b>{hold >= 100 ? 'Done' : `${hold}%`}</b>
-                      </div>
-                      <div className={`progress-bar hold ${hold >= 100 ? 'complete' : ''}`}>
-                        <i style={{ width: `${hold}%` }} />
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
-              <div className="camera-corners">
-                <i className="corner tl" />
-                <i className="corner tr" />
-                <i className="corner bl" />
-                <i className="corner br" />
-              </div>
-            </div>
-
-            {mode === 'conversation' && (
-              <div className="camera-controls">
-                <div className="timing-controls">
-                  <label>
-                    <span>Word pause</span>
-                    <div className="range-group">
-                      <input
-                        type="range"
-                        min="0.5"
-                        max="3"
-                        step="0.1"
-                        value={wordPause}
-                        onChange={e => setWordPause(+e.target.value)}
-                      />
-                      <b>{wordPause.toFixed(1)}s</b>
-                    </div>
-                  </label>
-
-                  <label>
-                    <span>Message pause</span>
-                    <div className="range-group">
-                      <input
-                        type="range"
-                        min="3"
-                        max="10"
-                        step="0.5"
-                        value={messagePause}
-                        onChange={e => setMessagePause(+e.target.value)}
-                      />
-                      <b>{messagePause.toFixed(1)}s</b>
-                    </div>
-                  </label>
-                </div>
-
-                <div className="status-chips">
-                  <div className="chip">
-                    <span className="chip-dot" />
-                    <span>Detecting: <b>{prediction}</b></span>
-                  </div>
-                  <div className="chip">
-                    <span>Building: <b>{currentWord || '—'}</b></span>
-                  </div>
-                  <div className="chip dim">
-                    <span>No hand: {elapsed}s</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {mode === 'learning' && (
-              <p className="camera-hint">
-                Sign SPACE, COMMA or FULLSTOP to punctuate your sentence.
-              </p>
-            )}
-          </div>
-
-          <ConversationMode
-  chat={chat}
-  reply={reply}
-  setReply={setReply}
-  sendReply={sendReply}
-  lastReply={lastReply}
-  resetChat={() => {
-    setChat([])
-    resetCapture()
-    setLastReply({ text: '', marathi: '' })
-  }}
-  startCamera={startCamera}
-  running={running}
-/>
-        </section>
-      </main>
-    </div>
+  return currentUser ? (
+    <WelcomeScreen
+      dark={dark}
+      toggleTheme={() => setDark(!dark)}
+      onLearn={enterLearning}
+      onConversation={enterConversation}
+      onSignIn={() => { setAuthNotice(''); setAuthKind('signin'); setAppPage('auth') }}
+      onSignUp={() => { setAuthNotice(''); setAuthKind('signup'); setAppPage('auth') }}
+    />
+  ) : (
+    <LandingPage
+      dark={dark}
+      toggleTheme={() => setDark(!dark)}
+      onSignIn={() => { setAuthNotice(''); setAuthKind('signin'); setAppPage('auth') }}
+      onSignUp={() => { setAuthNotice(''); setAuthKind('signup'); setAppPage('auth') }}
+    />
   )
 }
 

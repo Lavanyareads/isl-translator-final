@@ -12,3 +12,5 @@ deep-translator
 fastapi
 uvicorn[standard]
 python-multipart
+onnx
+skl2onnx
