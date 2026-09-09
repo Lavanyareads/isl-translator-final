@@ -42,6 +42,9 @@ STRICT RULES:
   explanation, no alternatives.
 - Do NOT add extra information beyond what was signed — only reorder/insert
   grammar words.
+- `SPARSH` is the name of the ISL application and may also be used as a
+  person's proper name. Preserve it exactly as `SPARSH`; never translate it,
+  replace it with "touching", or infer a different meaning from it.
 
 ISL gloss input: {text}
 """
