@@ -24,6 +24,7 @@ import numpy as np
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -364,3 +365,10 @@ def save_dynamic_sequence(payload: DynamicSequenceRequest):
 def translate(payload: TextRequest):
     cleaned = clean_isl_gloss(payload.text)
     return {"cleaned": cleaned, "marathi": translate_to_marathi(cleaned)}
+
+
+# Production serves the built React client from the same origin as the API.
+# Keeping this mount last ensures that /api routes always take precedence.
+FRONTEND_DIST = ROOT / "frontend" / "dist"
+if FRONTEND_DIST.exists():
+    app.mount("/", StaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
