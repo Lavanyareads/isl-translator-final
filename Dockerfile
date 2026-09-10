@@ -8,6 +8,14 @@ RUN npm run build
 
 FROM python:3.10-slim
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    libgl1 \
+    libxcb1 \
+    libxext6 \
+    libxrender1 \
+    libsm6 \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.deploy.txt ./
 RUN pip install --no-cache-dir -r requirements.deploy.txt
 COPY . ./
