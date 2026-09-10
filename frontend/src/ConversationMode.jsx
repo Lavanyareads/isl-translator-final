@@ -750,7 +750,7 @@ function ConversationMode({ onBack }) {
                 ref={videoRef}
                 className={
                   running
-                    ? 'conversation-video'
+                    ? `conversation-video ${facingMode === 'user' ? 'mirrored' : ''}`
                     : 'conversation-video-hidden'
                 }
                 muted
@@ -761,7 +761,7 @@ function ConversationMode({ onBack }) {
                 ref={overlayRef}
                 className={
                   running
-                    ? 'conversation-hand-overlay'
+                    ? `conversation-hand-overlay ${facingMode === 'user' ? 'mirrored' : ''}`
                     : 'conversation-video-hidden'
                 }
               />

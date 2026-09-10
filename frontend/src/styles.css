@@ -454,8 +454,12 @@ html[data-theme="dark"] .conversation-chat-panel h2 {
   height: 100%;
 
   object-fit: cover;
-  /* Conversation is intentionally unmirrored for natural signing. */
-  transform: none;
+}
+
+/* Mirror the front-camera preview and overlay together for natural signing. */
+.conversation-video.mirrored,
+.conversation-hand-overlay.mirrored {
+  transform: scaleX(-1);
 }
 
 .conversation-hand-overlay {
