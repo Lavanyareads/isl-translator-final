@@ -487,7 +487,12 @@ function ConversationMode({ onBack }) {
 
       await videoRef.current.play()
 
-      setFacingMode(requestedFacingMode)
+      // `ideal` may fall back silently (common on laptops). Reflect the
+      // actual camera direction so a front camera is always mirrored.
+      const actualFacingMode = stream
+        .getVideoTracks()[0]
+        ?.getSettings?.().facingMode
+      setFacingMode(actualFacingMode || requestedFacingMode)
       updateCameraSwitchAvailability(stream)
 
       stateRef.current.lastHand = Date.now()
