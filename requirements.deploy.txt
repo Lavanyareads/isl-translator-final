@@ -1,6 +1,7 @@
 # Runtime dependencies only. Training dependencies (Torch/ONNX exporters) stay local.
 fastapi
 uvicorn[standard]
+python-multipart
 opencv-python-headless
 mediapipe==0.10.9
 numpy==2.2.6
