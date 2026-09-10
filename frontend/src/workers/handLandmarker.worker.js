@@ -22,9 +22,9 @@ let dynamicModelChecked = false
 let dynamicEnabled = false
 // Average raw landmark movement across a short trail distinguishes a deliberate
 // moving sign from normal tracking jitter around a held static pose.
-const ENTER_DYNAMIC_MOTION = 0.035
-const EXIT_DYNAMIC_MOTION = 0.015
-const MOTION_PERSISTENCE_FRAMES = 8
+const ENTER_DYNAMIC_MOTION = 0.045
+const EXIT_DYNAMIC_MOTION = 0.012
+const MOTION_PERSISTENCE_FRAMES = 10
 let dynamicLock = false
 let movementFrames = 0
 let settledFrames = 0

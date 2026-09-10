@@ -4,7 +4,11 @@ import { isWordSign } from './config/signs'
 
 const API = '/api'
 const ignoredInConversation = new Set(['SPACE', 'COMMA', 'FULLSTOP'])
-const CONSENSUS_PREDICTIONS = 2
+// Conversation must favour a deliberate, stable sign over rapid guesses.
+const STATIC_MIN_CONFIDENCE = 75
+const STATIC_CONSENSUS_PREDICTIONS = 4
+const DYNAMIC_MIN_CONFIDENCE = 85
+const DYNAMIC_STABLE_PREDICTIONS = 3
 
 const HAND_CONNECTIONS = [
   [0, 1], [1, 2], [2, 3], [3, 4],
@@ -166,11 +170,33 @@ function ConversationMode({ onBack }) {
   }
 
   const addConfirmedSign = (letter) => {
+    const capture = stateRef.current
+
     if (isWordSign(letter)) {
-      setSentence(value => value + letter + ' ')
+      const nextSentence = `${capture.buffer}${letter} `
+      capture.buffer = nextSentence
+      setSentence(nextSentence)
     } else if (!ignoredInConversation.has(letter)) {
-      setCurrentWord(value => value + letter)
+      const nextWord = `${capture.word}${letter}`
+      capture.word = nextWord
+      setCurrentWord(nextWord)
     }
+  }
+
+  // Dynamic recognition is triggered while the hand is still in view. Commit
+  // any preceding fingerspelled word first so "I" then "EXCITED" preserves
+  // the order in which the signer performed them.
+  const flushPendingStaticWord = () => {
+    const capture = stateRef.current
+    const word = capture.word.trim()
+    if (!word) return
+
+    const nextSentence = `${capture.buffer}${word} `
+    capture.word = ''
+    capture.buffer = nextSentence
+    capture.wordCommitted = true
+    setCurrentWord('')
+    setSentence(nextSentence)
   }
 
   const finalizeConversation = async (raw) => {
@@ -274,7 +300,7 @@ function ConversationMode({ onBack }) {
     const dynamicLocked = dynamicActive && frame.dynamicLock
 
     if (dynamic.wasLocked && !dynamicLocked) {
-      dynamic.cooldownUntil = Date.now() + 400
+      dynamic.cooldownUntil = Date.now() + 600
       dynamic.buffer = []
       dynamic.lastAdded = ''
     }
@@ -291,17 +317,17 @@ function ConversationMode({ onBack }) {
         dynamicLocked &&
         Date.now() >= dynamic.cooldownUntil &&
         frame.dynamicWindowReady &&
-        frame.dynamicPrediction.confidence >= 75
+        frame.dynamicPrediction.confidence >= DYNAMIC_MIN_CONFIDENCE
       ) {
         const label = frame.dynamicPrediction.label
 
         dynamic.buffer = [
           ...dynamic.buffer,
           label
-        ].slice(-2)
+        ].slice(-DYNAMIC_STABLE_PREDICTIONS)
 
         const stable =
-          dynamic.buffer.length === 2 &&
+          dynamic.buffer.length === DYNAMIC_STABLE_PREDICTIONS &&
           dynamic.buffer.every(item => item === label)
 
         setPrediction(label)
@@ -314,7 +340,10 @@ function ConversationMode({ onBack }) {
           label !== 'NO_SIGN'
         ) {
           dynamic.lastAdded = label
-          setSentence(value => value + label + ' ')
+          flushPendingStaticWord()
+          const nextSentence = `${stateRef.current.buffer}${label} `
+          stateRef.current.buffer = nextSentence
+          setSentence(nextSentence)
         }
 
         return
@@ -374,10 +403,16 @@ function ConversationMode({ onBack }) {
 
       const r = recognizer.current
 
-      r.buffer = [
-        ...r.buffer,
-        result.prediction
-      ].slice(-5)
+      if (result.confidence < STATIC_MIN_CONFIDENCE) {
+        r.buffer = []
+        r.previous = null
+        r.count = 0
+        setPrediction('…')
+        setConfidence(result.confidence)
+        return
+      }
+
+      r.buffer = [...r.buffer, result.prediction].slice(-5)
 
       const letter = [...r.buffer].sort(
         (a, b) =>
@@ -396,7 +431,7 @@ function ConversationMode({ onBack }) {
       setConfidence(result.confidence)
 
       if (
-        r.count >= CONSENSUS_PREDICTIONS &&
+        r.count >= STATIC_CONSENSUS_PREDICTIONS &&
         r.lastAdded !== letter
       ) {
         r.lastAdded = letter
