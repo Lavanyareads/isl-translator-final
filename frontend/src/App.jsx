@@ -12,6 +12,7 @@ const SPECIAL = { SPACE: ' ', COMMA: ',', FULLSTOP: '.' }
 const ignoredInConversation = new Set(Object.keys(SPECIAL))
 const CONSENSUS_PREDICTIONS = 2
 const COMPETE_CONSENSUS_PREDICTIONS = 5
+const PRACTICE_HOLD_MS = 2000
 
 const LEVELS = [
   { id: 1, title: 'Basics', icon: '👋', color: 'mint', description: 'Start with the first five alphabet signs.', signs: ['A', 'B', 'C', 'D', 'E'] },
@@ -269,7 +270,7 @@ function App() {
   const landmarkerRef = useRef(null)
   const classifierInFlight = useRef(false)
   const lastClassificationAt = useRef(0)
-  const recognizer = useRef({ buffer: [], previous: null, count: 0, lastAdded: '' })
+  const recognizer = useRef({ buffer: [], previous: null, count: 0, stableSince: 0, lastAdded: '' })
   const stateRef = useRef({ mode: 'learning', word: '', buffer: '', lastHand: Date.now(), wordCommitted: true, messageSent: true })
 
   const [mode, setMode] = useState('learning')
@@ -409,7 +410,7 @@ useEffect(() => {
   }, [lastAdded, activeLesson, activeLevel, mode])
 
   const resetCapture = () => {
-    recognizer.current = { buffer: [], previous: null, count: 0, lastAdded: '' }
+    recognizer.current = { buffer: [], previous: null, count: 0, stableSince: 0, lastAdded: '' }
     setSentence('')
     setCurrentWord('')
     setLastAdded('')
@@ -489,7 +490,7 @@ useEffect(() => {
   
 
   const handleNoHand = () => {
-    recognizer.current = { ...recognizer.current, buffer: [], previous: null, count: 0, lastAdded: '' }
+    recognizer.current = { ...recognizer.current, buffer: [], previous: null, count: 0, stableSince: 0, lastAdded: '' }
     setPrediction('·')
     setHold(0)
     setConfidence(0)
@@ -546,20 +547,30 @@ useEffect(() => {
         (a, b) => r.buffer.filter(x => x === b).length - r.buffer.filter(x => x === a).length
       )[0]
 
-      r.count = letter === r.previous ? r.count + 1 : 0
+      const isSamePrediction = letter === r.previous
+      r.count = isSamePrediction ? r.count + 1 : 0
+      r.stableSince = isSamePrediction ? (r.stableSince || Date.now()) : Date.now()
       r.previous = letter
 
+      const isPracticeMode = c.mode === 'learning' && learningView === 'practice-page'
       const requiredConsensus = c.mode === 'conversation'
         ? CONSENSUS_PREDICTIONS
-        : learningView === 'compete' || learningView === 'practice-page'
+        : learningView === 'compete'
           ? COMPETE_CONSENSUS_PREDICTIONS
           : 20
+      const stableForMs = Date.now() - r.stableSince
+      const holdPercent = isPracticeMode
+        ? Math.min(100, Math.round(stableForMs / PRACTICE_HOLD_MS * 100))
+        : Math.min(100, Math.round(r.count / requiredConsensus * 100))
+      const isConfirmed = isPracticeMode
+        ? stableForMs >= PRACTICE_HOLD_MS
+        : r.count >= requiredConsensus
 
       setPrediction(letter)
       setConfidence(result.confidence)
-      setHold(Math.min(100, Math.round(r.count / requiredConsensus * 100)))
+      setHold(holdPercent)
 
-      if (r.count >= requiredConsensus && r.lastAdded !== letter) {
+      if (isConfirmed && r.lastAdded !== letter) {
         r.lastAdded = letter
         setLastAdded(letter)
         addConfirmedSign(letter)
