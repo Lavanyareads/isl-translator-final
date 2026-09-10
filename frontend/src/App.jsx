@@ -426,32 +426,64 @@ useEffect(() => {
     setRunning(false)
   }
 
-  const addConfirmedSign = (letter) => {
-  
+  const finalizePracticeSentence = async (raw) => {
+    setNotice('Translating…')
+    try {
+      const response = await fetch(`${API}/translate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: raw }),
+      })
+      setOutput(await response.json())
+      setNotice('')
+    } catch {
+      setNotice('Translation failed. Check the API server and GROQ_API_KEY.')
+    }
+  }
 
+  const addConfirmedSign = (letter) => {
     setStats(value => ({ ...value, signs: value.signs + 1 }))
 
-    if (SPECIAL[letter]) {
-      const mark = SPECIAL[letter]
+    const capture = stateRef.current
+    const word = capture.word.trim()
+    const existing = capture.buffer.trim()
 
-      if (mark === ' ') {
-        if (capture.word) {
-          setSentence(value => value + capture.word + ' ')
-          setCurrentWord('')
-          setStats(value => ({ ...value, words: value.words + 1 }))
-        }
-      } else {
-        if (capture.word) {
-          setSentence(value => value + capture.word + mark + ' ')
-          setCurrentWord('')
-          setStats(value => ({ ...value, words: value.words + 1 }))
-        } else {
-          setSentence(value => value + mark + ' ')
-        }
+    if (letter === 'SPACE') {
+      if (word) {
+        const nextSentence = `${existing}${existing ? ' ' : ''}${word} `
+        setSentence(nextSentence)
+        setCurrentWord('')
+        capture.word = ''
+        capture.buffer = nextSentence
+        setStats(value => ({ ...value, words: value.words + 1 }))
       }
-    } else {
-      setCurrentWord(value => value + letter)
+      return
     }
+
+    if (letter === 'FULLSTOP') {
+      const completed = `${existing}${existing && word ? ' ' : ''}${word}`.trim()
+      if (!completed) return
+      const completedSentence = completed.endsWith('.') ? completed : `${completed}.`
+      setSentence(completedSentence)
+      setCurrentWord('')
+      capture.word = ''
+      capture.buffer = completedSentence
+      if (word) setStats(value => ({ ...value, words: value.words + 1 }))
+      finalizePracticeSentence(completedSentence)
+      return
+    }
+
+    if (letter === 'COMMA') {
+      const nextSentence = `${existing}${existing && word ? ' ' : ''}${word}, `.trimStart()
+      setSentence(nextSentence)
+      setCurrentWord('')
+      capture.word = ''
+      capture.buffer = nextSentence
+      if (word) setStats(value => ({ ...value, words: value.words + 1 }))
+      return
+    }
+
+    setCurrentWord(value => value + letter)
   }
 
   
@@ -593,20 +625,7 @@ useEffect(() => {
   const translate = async () => {
     const raw = `${sentence}${currentWord}`.trim()
     if (!raw) return setNotice('Nothing to translate yet.')
-
-    setNotice('Translating…')
-
-    try {
-      const response = await fetch(`${API}/translate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: raw }),
-      })
-      setOutput(await response.json())
-      setNotice('')
-    } catch {
-      setNotice('Translation failed. Check the API server and GROQ_API_KEY.')
-    }
+    finalizePracticeSentence(raw)
   }
 
   const sendReply = async (event) => {
