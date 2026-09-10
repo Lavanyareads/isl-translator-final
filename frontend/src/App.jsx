@@ -11,6 +11,7 @@ const API = '/api'
 const SPECIAL = { SPACE: ' ', COMMA: ',', FULLSTOP: '.' }
 const ignoredInConversation = new Set(Object.keys(SPECIAL))
 const CONSENSUS_PREDICTIONS = 2
+const COMPETE_CONSENSUS_PREDICTIONS = 5
 
 const LEVELS = [
   { id: 1, title: 'Basics', icon: '👋', color: 'mint', description: 'Start with the first five alphabet signs.', signs: ['A', 'B', 'C', 'D', 'E'] },
@@ -516,11 +517,15 @@ useEffect(() => {
       r.count = letter === r.previous ? r.count + 1 : 0
       r.previous = letter
 
+      const requiredConsensus = c.mode === 'conversation'
+        ? CONSENSUS_PREDICTIONS
+        : learningView === 'compete'
+          ? COMPETE_CONSENSUS_PREDICTIONS
+          : 20
+
       setPrediction(letter)
       setConfidence(result.confidence)
-      setHold(Math.min(100, Math.round(r.count / 20 * 100)))
-
-      const requiredConsensus = c.mode === 'conversation' ? CONSENSUS_PREDICTIONS : 20
+      setHold(Math.min(100, Math.round(r.count / requiredConsensus * 100)))
 
       if (r.count >= requiredConsensus && r.lastAdded !== letter) {
         r.lastAdded = letter
@@ -796,6 +801,12 @@ const handlePreviousLetter = () => {
   stopCamera={stopCamera}
   resetCapture={resetCapture}
   onBack={backToLearningPath}
+  onComplete={() => {
+    stopCamera()
+    resetCapture()
+    setLearningView('path')
+    setLearningPage('levels')
+  }}
   initialTarget={['A', 'B', 'C', 'D', 'E'].indexOf(competeTarget)}
   onPassed={handleCompetePassed}
 />

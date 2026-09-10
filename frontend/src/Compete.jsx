@@ -53,6 +53,7 @@ export default function Compete({
   stopCamera,
   resetCapture,
   onBack,
+  onComplete,
   onPassed,
   initialTarget = 0,
 }) {
@@ -68,7 +69,9 @@ export default function Compete({
   // A level passes ONLY when the model's current prediction is the exact target
   // and the existing App confirmation hold reaches 100%.
   const exactMatch = detected === target;
-  const isPassed = exactMatch && holdValue >= 100;
+  // Once a target has been confirmed, keep that result until the learner
+  // chooses Next. The live hold meter resets when their hand leaves camera.
+  const isPassed = passed.has(target) || (exactMatch && holdValue >= 100);
   const isWrong = running && detected && detected !== target;
 
   useEffect(() => {
@@ -97,6 +100,8 @@ export default function Compete({
     if (targetIndex < TARGETS.length - 1) {
       setTargetIndex((i) => i + 1);
       resetCapture?.();
+    } else {
+      onComplete?.();
     }
   };
 

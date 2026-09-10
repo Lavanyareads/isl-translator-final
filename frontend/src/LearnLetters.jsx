@@ -108,9 +108,44 @@ export default function IndividualLetterLearning({
         .sl-eyebrow{margin:0 0 5px;color:var(--sl-pink);font-size:10px;font-weight:800;letter-spacing:.15em}
         .sl-title{margin:0;font-size:clamp(32px,4vw,47px);line-height:.95;letter-spacing:-.045em}.sl-title span{color:var(--sl-accent)}
         .sl-level{padding:7px 10px;height:max-content;border:1px solid var(--sl-border);border-radius:99px;background:var(--sl-card2);color:var(--sl-muted);font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase}
-        .sl-image-box{position:relative;z-index:1;height:285px;display:grid;place-items:center;margin:24px 0 20px;overflow:hidden;border:2px solid var(--sl-border);border-radius:20px;background:radial-gradient(circle at 50% 45%,color-mix(in srgb,var(--sl-accent) 8%,transparent),transparent 56%),var(--sl-card2)}
-        .sl-image-box:before{content:"";position:absolute;inset:16px;border:1px dashed color-mix(in srgb,var(--sl-accent) 24%,transparent);border-radius:15px}
-        .sl-sign-image{position:relative;z-index:1;max-width:78%;max-height:88%;object-fit:contain;border-radius:14px;filter:drop-shadow(0 15px 18px rgba(55,29,98,.13));animation:sl-in .35s ease}
+        .sl-image-box{
+  position:relative;
+  z-index:1;
+  height:285px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  margin:24px 0 20px;
+  padding:20px;
+  overflow:hidden;
+  border:2px solid var(--sl-border);
+  border-radius:20px;
+  background:radial-gradient(
+    circle at 50% 45%,
+    color-mix(in srgb,var(--sl-accent) 8%,transparent),
+    transparent 56%
+  ),var(--sl-card2);
+}
+        .sl-sign-image{
+  position:relative;
+  z-index:1;
+  display:block;
+
+  /* Let the image keep its natural proportions */
+  width:auto;
+  height:auto;
+
+  /* NEVER allow the image to escape the reference box */
+  max-width:100%;
+  max-height:100%;
+
+  object-fit:contain;
+  object-position:center;
+
+  border-radius:14px;
+  filter:drop-shadow(0 15px 18px rgba(55,29,98,.13));
+  animation:sl-in .35s ease;
+}
         .sl-missing{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;color:var(--sl-dim);padding:25px}
         .sl-missing-icon{width:54px;height:54px;display:grid;place-items:center;border-radius:17px;background:color-mix(in srgb,var(--sl-accent) 10%,transparent);color:var(--sl-accent)}
         .sl-missing-icon svg{width:23px;height:23px}.sl-missing strong{color:var(--sl-text);font-size:13px}.sl-missing span{max-width:240px;font-size:10px;line-height:1.5}
