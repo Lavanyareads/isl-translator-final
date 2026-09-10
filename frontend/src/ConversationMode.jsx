@@ -69,6 +69,8 @@ function ConversationMode({ onBack }) {
   const [dynamicReady, setDynamicReady] = useState(false)
   const [dynamicEnabled, setDynamicEnabled] = useState(false)
   const [staticReady, setStaticReady] = useState(false)
+  const [facingMode, setFacingMode] = useState('user')
+  const [canSwitchCamera, setCanSwitchCamera] = useState(false)
 
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? 'dark' : 'light'
@@ -167,6 +169,25 @@ function ConversationMode({ onBack }) {
       .forEach(track => track.stop())
 
     setRunning(false)
+  }
+
+  const updateCameraSwitchAvailability = async (stream) => {
+    const facingModes = stream?.getVideoTracks?.()[0]
+      ?.getCapabilities?.().facingMode || []
+
+    if (facingModes.includes('user') && facingModes.includes('environment')) {
+      setCanSwitchCamera(true)
+      return
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      setCanSwitchCamera(
+        devices.filter(device => device.kind === 'videoinput').length > 1
+      )
+    } catch {
+      setCanSwitchCamera(false)
+    }
   }
 
   const addConfirmedSign = (letter) => {
@@ -446,12 +467,12 @@ function ConversationMode({ onBack }) {
     }
   }
 
-  const startCamera = async () => {
+  const startCamera = async (requestedFacingMode = facingMode) => {
     try {
       const stream =
         await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: 'user',
+            facingMode: { ideal: requestedFacingMode },
             width: {
               ideal: 1280
             },
@@ -465,6 +486,9 @@ function ConversationMode({ onBack }) {
       videoRef.current.srcObject = stream
 
       await videoRef.current.play()
+
+      setFacingMode(requestedFacingMode)
+      updateCameraSwitchAvailability(stream)
 
       stateRef.current.lastHand = Date.now()
 
@@ -526,6 +550,19 @@ function ConversationMode({ onBack }) {
       setNotice(
         `Could not start the camera: ${message}`
       )
+    }
+  }
+
+  const switchCamera = async () => {
+    const nextFacingMode = facingMode === 'user' ? 'environment' : 'user'
+    const wasRunning = running
+
+    stopCamera()
+
+    if (wasRunning) {
+      await startCamera(nextFacingMode)
+    } else {
+      setFacingMode(nextFacingMode)
     }
   }
 
@@ -775,6 +812,18 @@ function ConversationMode({ onBack }) {
                   ? 'Stop Camera'
                   : 'Start Camera'}
               </button>
+
+              {canSwitchCamera && (
+                <button
+                  className="conversation-button secondary"
+                  onClick={switchCamera}
+                  aria-label="Switch between front and back camera"
+                >
+                  {facingMode === 'user'
+                    ? 'Use Back Camera'
+                    : 'Use Front Camera'}
+                </button>
+              )}
 
               <button
                 className="conversation-button secondary"
