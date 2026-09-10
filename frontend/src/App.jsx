@@ -519,7 +519,7 @@ useEffect(() => {
 
       const requiredConsensus = c.mode === 'conversation'
         ? CONSENSUS_PREDICTIONS
-        : learningView === 'compete'
+        : learningView === 'compete' || learningView === 'practice-page'
           ? COMPETE_CONSENSUS_PREDICTIONS
           : 20
 
