@@ -1,765 +1,539 @@
-S-स्पर्श — Indian Sign Language (ISL) Translator
+# S-स्पर्श (SPARSH)
 
-S-स्पर्श (Sparsh) is a web-based Indian Sign Language (ISL) learning and translation platform. It uses a webcam to recognize hand signs, build words and sentences, and provide English and Marathi output.
+### AI-Powered Indian Sign Language Recognition, Learning and Communication Platform
 
-The project combines a React + Vite frontend, FastAPI backend, MediaPipe hand-landmark detection, machine-learning classifiers, Groq LLM-based English grammar correction, and Marathi translation. It also includes learning, practice, competition, authentication, and sign-collection features.
+Bridging communication through technology.
 
-✨ Features
+SPARSH is an AI-powered platform designed to support Indian Sign Language (ISL) recognition, learning, and accessible communication. It combines computer vision, machine learning, and language processing to recognize static and dynamic signs, build sentences, and translate messages into English and Marathi.
 
-Real-Time ISL Translation
+---
 
-Real-time hand tracking using MediaPipe
+## Overview
 
-Recognition of A–Z alphabet signs
+Communication can be challenging when people do not share a common language. Many Deaf and Hard-of-Hearing individuals use Indian Sign Language (ISL), while much of the hearing population may not understand it.
 
-Recognition of commonly used ISL word signs
+SPARSH aims to reduce this communication gap through an interactive platform that supports sign recognition, sentence formation, translation, and ISL learning.
 
-Special signs for SPACE, COMMA, and FULLSTOP
+The platform provides two primary modes:
 
-Live word and sentence construction
+- Learning Mode: Explore ISL signs, practise recognition, and engage with interactive activities.
+- Conversation Mode: Recognize supported signs through a camera, build messages, and support English and Marathi communication.
 
-Confidence-based prediction and sign consensus
+## Problem Statement
 
-English sentence cleanup and grammatical reordering using Groq LLM
+Deaf and Hard-of-Hearing individuals in India face communication barriers because many people are unfamiliar with Indian Sign Language. Limited access to interpreters and accessible tools creates challenges in education, public services, workplaces, and daily interactions. SPARSH aims to provide an accessible technology-based approach to sign recognition, translation, and learning.
 
-English-to-Marathi translation
+## Our Solution
 
-Text-to-speech for English and Marathi output
+SPARSH combines browser-based computer vision with machine learning models and language-processing services to support ISL communication.
 
-📚 ISL Learning Platform
+The system detects hand landmarks from a camera feed, processes the extracted features, and identifies static or dynamic signs. Recognized signs are used to build messages. The backend processes finalized messages into grammatical English using Groq LLM, followed by Marathi translation using Google Translate.
 
-Structured learning levels
+The platform also offers interactive learning features to encourage ISL awareness and practice.
 
-Alphabet sign learning
+## Key Features
 
-Sign cards with visual references
+### 1. Real-Time Sign Recognition
 
-Camera-based practice
+- Camera-based hand tracking using MediaPipe.
+- Static sign recognition using SVM and Random Forest models.
+- Dynamic sign recognition using temporal sequences and PyTorch LSTM.
+- Browser-based inference using ONNX models.
 
-Progress tracking
+### 2. Conversation Mode
 
-Achievements and learning journey
+- Recognition of supported static and dynamic signs.
+- Word and sentence formation from recognized signs.
+- English message generation through Groq LLM.
+- Marathi translation through Google Translate.
+- English-first conversation interface with Marathi output.
 
-Competition mode for practicing recognition
+### 3. Learning Mode
 
-👤 User Accounts
+- Interactive ISL sign cards.
+- Sign learning and practice activities.
+- Learning progression and challenges.
+- Practice and competition features.
 
-Sign up and sign in
+### 4. Accessible Communication
 
-Username/email-based login
+- Camera-based sign recognition.
+- Sentence-building support.
+- English and Marathi communication output.
+- Browser-based access through compatible devices.
 
-Password hashing using PBKDF2-HMAC-SHA256
+### 5. Authentication
 
-Session-based authentication
+- Login and signup interface.
+- JWT-based session handling, as represented in the system architecture.
 
-Persistent learning experience for signed-in users
+---
 
-🎨 User Experience
+## Technology Stack
 
-Modern React interface
+### Frontend
+- React
+- Vite
+- JavaScript
+- Browser-based camera access
 
-Light and dark themes
+### Computer Vision
+- MediaPipe Hand Landmarker
+- Hand landmark extraction
+- Landmark normalization
+- Temporal landmark buffering
 
-Responsive learning and translation screens
+### Machine Learning
+- Scikit-learn
+- Support Vector Machine (SVM)
+- Random Forest
+- PyTorch LSTM
+- ONNX Runtime for browser-based inference
 
-Camera status and recognition indicators
+### Backend
+- Python
+- FastAPI
+- JWT-based authentication sessions
 
-Separate conversation, learning, practice, and compete experiences
+### Language Processing and Translation
+- Groq LLM for converting ISL gloss sequences into grammatical English
+- Google Translate for English-to-Marathi translation
 
-🧠 Technology Stack
+### Model Training and Export
+- Python training scripts
+- Static model training and ONNX export
+- Dynamic model training and ONNX export
 
-Layer
+---
 
-Technologies
+## System Architecture
 
-Frontend
+SPARSH consists of three major workflows: real-time sign recognition, message translation, and offline model training.
 
-React, Vite, JavaScript, CSS
+### Real-Time Recognition Pipeline
 
-Hand Tracking
+```text
+User / Camera
+      |
+      v
+React + Vite Frontend
+      |
+      v
+Video Frame Scheduling
+      |
+      v
+MediaPipe Hand Landmark Detection
+      |
+      v
+Landmark Normalization
+      |
+      +--------------------------+
+      |                          |
+      v                          v
+Static ONNX Model       Temporal Landmark Buffer
+                                 |
+                                 v
+                         Dynamic ONNX Model
+      |                          |
+      +-------------+------------+
+                    |
+                    v
+          Static / Dynamic Arbitration
+                    |
+                    v
+            Conversation Engine
+                    |
+                    v
+           Conversation Interface
+```
 
-MediaPipe Tasks Vision / Hand Landmarker
+### Translation Pipeline
 
-Browser ML
+```text
+Finalized ISL Message
+          |
+          v
+     FastAPI Backend
+          |
+          v
+       Groq LLM
+(ISL gloss to grammatical English)
+          |
+          v
+   Google Translate
+    (English to Marathi)
+          |
+          v
+    English + Marathi Output
+```
 
-ONNX Runtime Web
+### Offline Training and Model Export
 
-Backend
+Static sign recognition:
 
-Python, FastAPI, Uvicorn
+```text
+Static Sign Samples
+        |
+        v
+  train_static.py
+        |
+        v
+ Scikit-learn Model
+        |
+        v
+export_static_onnx.py
+        |
+        v
+  static_sign.onnx
+```
 
-Machine Learning
+Dynamic sign recognition:
 
-Scikit-learn, SVM, Random Forest
+```text
+Dynamic Sign Sequences
+        |
+        v
+  train_dynamic.py
+        |
+        v
+  PyTorch LSTM Model
+        |
+        v
+export_dynamic_onnx.py
+        |
+        v
+  dynamic_sign.onnx
+```
 
-Dynamic Model
+The exported models are designed for use in the browser-based inference pipeline.
 
-PyTorch LSTM
+### Architecture Diagram
 
-Data Processing
+Upload your architecture image to the repository and display it here:
 
-NumPy, Pandas
+```markdown
+![SPARSH System Architecture](docs/images/sparsh-architecture.png)
+```
 
-Model Storage
+Replace the path with the actual image location in your repository.
 
-Joblib, ONNX, PyTorch
+---
 
-English Grammar
+## How It Works
 
-Groq API / LLM
+1. Capture: The user presents a supported sign to the device camera.
+2. Detect: MediaPipe identifies hand landmarks from video frames.
+3. Normalize: Landmark coordinates are transformed into normalized features.
+4. Recognize: The static model classifies handshapes, while the dynamic model processes temporal sequences.
+5. Arbitrate: Recognition results are evaluated using confidence and temporal-stability logic.
+6. Build: The conversation engine combines recognized signs into words and sentences.
+7. Translate: Finalized messages are processed by the backend, Groq LLM, and Google Translate.
+8. Display: The interface presents the English message and Marathi translation.
 
-Marathi Translation
+Recognition depends on the supported sign vocabulary and the quality of the camera input.
 
-Google Translator through deep-translator
+---
 
-Authentication
+## Project Structure
 
-SQLite + PBKDF2-HMAC-SHA256
+The following is a suggested structure. Keep the actual filenames and directories used in your repository.
 
-Camera / Legacy Testing
-
-OpenCV
-
-📁 Project Structure
-
-isl-translator-final-main/
-│
+```text
+SPARSH/
 ├── frontend/
-│   ├── index.html
-│   ├── collector.html
-│   ├── dynamic-collector.html
-│   ├── package.json
-│   ├── vite.config.js
-│   │
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   └── App.jsx
 │   ├── public/
-│   │   ├── models/
-│   │   │   ├── static_sign.onnx
-│   │   │   ├── static_sign.labels.json
-│   │   │   ├── dynamic_sign.onnx
-│   │   │   └── dynamic_sign.labels.json
-│   │   └── signs/
-│   │       └── sign reference images
-│   │
-│   └── src/
-│       ├── App.jsx
-│       ├── main.jsx
-│       ├── ConversationMode.jsx
-│       ├── LearnLetters.jsx
-│       ├── Practice.jsx
-│       ├── Compete.jsx
-│       ├── LandingPage.jsx
-│       ├── collector.js
-│       ├── dynamicCollector.js
-│       │
-│       ├── components/
-│       │   ├── learning/
-│       │   └── shared/
-│       │
-│       ├── config/
-│       │   └── signs.js
-│       │
-│       ├── hooks/
-│       │   └── useRecognition.js
-│       │
-│       ├── lib/
-│       │   ├── browserHandLandmarker.js
-│       │   └── landmarks.js
-│       │
-│       ├── pages/
-│       │   ├── AchievementsPage.jsx
-│       │   ├── ConversationPage.jsx
-│       │   ├── LandingPage.jsx
-│       │   ├── LearnPage.jsx
-│       │   ├── LearningPage.jsx
-│       │   └── SignupPage.jsx
-│       │
-│       └── workers/
-│           └── handLandmarker.worker.js
+│   ├── package.json
+│   └── vite.config.js
 │
 ├── backend/
-│   └── main.py
+│   ├── main.py
+│   ├── routes/
+│   └── requirements.txt
 │
-├── src/
-│   ├── collect_data.py
-│   ├── collect_static.py
-│   ├── collect_dynamic.py
-│   ├── train.py
+├── training/
 │   ├── train_static.py
-│   ├── train_browser_static.py
 │   ├── train_dynamic.py
 │   ├── export_static_onnx.py
-│   ├── export_dynamic_onnx.py
-│   └── predict.py
+│   └── export_dynamic_onnx.py
 │
-├── data/
-│   ├── A.csv ... Z.csv
-│   └── vocabulary/special-sign CSV files
+├── models/
+│   ├── static_sign.onnx
+│   ├── dynamic_sign.onnx
+│   └── labels/
 │
-├── dataset/
+├── sample_data/
 │   ├── static/
 │   └── dynamic/
 │
-├── models/
-│   └── trained Python models
+├── test_cases/
+│   └── test_cases.md
 │
-├── app.py
-├── groq_helper.py
-├── requirements.txt
-├── Dockerfile
-├── .dockerignore
-└── .gitignore
+├── docs/
+│   └── architecture.md
+│
+├── .env.example
+├── .gitignore
+├── LICENSE
+└── README.md
+```
 
-⚙️ Prerequisites
+---
 
-Install the following before running the project:
+## Installation and Setup
 
-Python 3.10 or another supported Python 3.9–3.11 environment
+### Prerequisites
 
-Node.js and npm
+Install the following:
 
-A working webcam
+- Git
+- Node.js and npm
+- A Python version compatible with the backend dependencies
+- A modern browser with camera access
+- API credentials for the language-processing and translation services, if required
 
-Git, if cloning the repository
+### 1. Clone the Repository
 
-A Groq API key for English sentence correction
+```bash
+git clone https://github.com/Lavanyareads/isl-translator-final.git
+cd isl-translator-final
+```
 
-MediaPipe versions can be sensitive to Python versions, so a Python 3.10 virtual environment is recommended.
+### 2. Install Frontend Dependencies
 
-🚀 Installation
+Navigate to the frontend directory:
 
-1. Clone the repository
-
-git clone <repository-url>
-cd isl-translator-final-main
-
-2. Create and activate a Python virtual environment
-
-Windows PowerShell
-
-py -3.10 -m venv venv
-.\venv\Scripts\Activate.ps1
-
-macOS / Linux
-
-python3 -m venv venv
-source venv/bin/activate
-
-3. Install Python dependencies
-
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-
-4. Install frontend dependencies
-
+```bash
 cd frontend
 npm install
-cd ..
+```
 
-🔑 Configure the Groq API
+Start the frontend development server:
 
-Create a .env file in the project root:
-
-GROQ_API_KEY=your_groq_api_key_here
-
-The key is loaded through python-dotenv.
-
-Do not commit .env or expose your API key publicly.
-
-Groq is used primarily to convert raw ISL-style word order into more natural English. Marathi translation is handled separately by the backend using deep-translator.
-
-▶️ Run the Application
-
-The application uses two servers during development.
-
-Terminal 1 — Start FastAPI
-
-From the project root:
-
-uvicorn backend.main:app --reload --port 8000
-
-The API runs at:
-
-http://127.0.0.1:8000
-
-Terminal 2 — Start React/Vite
-
-cd frontend
+```bash
 npm run dev
+```
 
-Open the local URL displayed by Vite, normally:
+Open the local URL displayed in the terminal. In a standard Vite setup, this is commonly `http://localhost:5173`.
 
-http://localhost:5173
+### 3. Set Up the Backend
 
-The Vite configuration proxies /api requests to the FastAPI server.
+Open another terminal and navigate to the backend directory used by the project.
 
-🔐 Authentication
+Create a virtual environment:
 
-S-स्पर्श includes account functionality through the FastAPI backend.
+```bash
+python -m venv .venv
+```
 
-Sign Up
+On Windows:
 
-Users provide:
+```bash
+.venv\Scripts\activate
+```
 
-Username
+On macOS or Linux:
 
-Email
+```bash
+source .venv/bin/activate
+```
 
-Password
+Install the backend dependencies using the repository's requirements file:
 
-Password confirmation
-
-Username validation allows letters, numbers, and underscores. Passwords must contain at least 8 characters.
-
-Sign In
-
-Users can sign in using either:
-
-Email address
-
-Username
-
-The backend creates a session token and stores the hashed session token in SQLite.
-
-The authentication database is created automatically at:
-
-instance/sparsh_auth.db
-
-The database is generated locally and does not need to be manually created before starting the server.
-
-🤟 Sign Recognition Pipeline
-
-The main recognition pipeline works as follows:
-
-Webcam
-   ↓
-MediaPipe Hand Landmarker
-   ↓
-Hand Landmark Extraction
-   ↓
-Landmark Normalization
-   ↓
-Browser / Python Classifier
-   ↓
-Recognized ISL Sign
-   ↓
-Word / Sentence Builder
-   ↓
-English Grammar Correction
-   ↓
-Marathi Translation
-   ↓
-Text + Speech Output
-
-Browser Hand Tracking
-
-MediaPipe Hand Landmarker runs in the browser using a dedicated Web Worker.
-
-The browser extracts hand landmarks instead of continuously sending raw camera frames to the backend for the browser-landmark pipeline.
-
-Each detected hand contains:
-
-21 hand landmarks
-
-X, Y and Z coordinates
-
-63 values per hand
-
-Left/right hand presence information
-
-Normalized landmark coordinates
-
-The application can represent both hands using a fixed 128-value feature vector:
-
-63 left-hand values
-+ 63 right-hand values
-+ left-hand presence
-+ right-hand presence
-= 128 features
-
-A temporal buffer is also maintained for dynamic-sign recognition experiments.
-
-🤖 Machine-Learning Models
-
-The project contains more than one recognition path.
-
-1. Legacy Python Classifier
-
-The legacy model is trained from CSV landmark data stored in:
-
-data/
-
-src/train.py compares:
-
-SVM
-
-Random Forest
-
-The model with the better held-out test accuracy is saved as:
-
-models/model.pkl
-
-Run:
-
-python src/train.py
-
-2. Browser Static-Sign Model
-
-Browser-collected static landmark recordings are stored under:
-
-dataset/static/<SIGN>/
-
-Each recording contains normalized left/right hand landmarks and presence information.
-
-Train the browser static model:
-
-python src/train_static.py
-
-The default output is:
-
-models/browser_static_model.pkl
-
-The FastAPI backend can automatically load this model when it is available.
-
-3. Dynamic LSTM Model
-
-Dynamic signs are represented as temporal sequences:
-
-dataset/dynamic/
-└── SIGN_NAME/
-    └── sequence_ID/
-        └── landmarks.json
-
-The dynamic model uses a PyTorch LSTM to learn movement across a sequence of frames.
-
-Train it with:
-
-python src/train_dynamic.py --frames 30 --epochs 40
-
-The checkpoint is saved as:
-
-models/dynamic_lstm.pt
-
-The dynamic model is currently a separate training/validation pipeline and should not be described as the primary live translator unless the browser inference integration has been enabled.
-
-📊 Dataset Collection
-
-Legacy CSV Dataset
-
-To collect a traditional hand-landmark dataset:
-
-python src/collect_data.py --sign A --samples 50
-
-Repeat for the required signs.
-
-The samples are stored as:
-
-data/A.csv
-data/B.csv
-...
-
-The repository currently contains alphabet CSV files and additional vocabulary/special-sign data such as:
-
-hello
-thankyou
-namaste
-please
-sorry
-welcome
-space
-fullstop
-
-Use the exact labels expected by the training and recognition configuration.
-
-🖐️ Browser Static Dataset
-
-Static browser recordings can be collected through the separate collector page.
-
-Example:
-
-python src/collect_static.py A --samples 200
-
-The recordings are stored under:
-
-dataset/static/A/
-
-Repeat the process for each required sign.
-
-The main translator interface is kept separate from the data-collection interface.
-
-🔄 Dynamic Dataset Collection
-
-Collect a motion-based sign sequence using:
-
-python src/collect_dynamic.py WAVE --frames 30
-
-The sequence is saved under:
-
-dataset/dynamic/WAVE/
-
-A dynamic sequence contains multiple landmark frames and is intended for LSTM-based recognition.
-
-🌐 Browser-Ready ONNX Models
-
-The project includes ONNX export scripts for browser deployment.
-
-Static model
-
-python src/export_static_onnx.py
-
-Dynamic model
-
-python src/export_dynamic_onnx.py
-
-Browser-ready artifacts are placed under:
-
-frontend/public/models/
-
-The frontend uses ONNX Runtime Web for browser-side model execution where configured.
-
-📖 Learning Modes
-
-The React application is more than a translator. It provides separate learning experiences.
-
-Learn
-
-The learning journey contains progressive levels, including:
-
-Basic alphabet signs
-
-More alphabet signs
-
-Everyday vocabulary
-
-Useful communication signs
-
-Sign Cards
-
-Users can view sign references and learn the corresponding ISL signs.
-
-Practice
-
-Practice mode uses the camera to help users test their sign recognition and improve their accuracy.
-
-Compete
-
-Competition mode provides a more game-like way to test sign-recognition skills.
-
-Conversation
-
-Conversation mode focuses on using recognized signs to form meaningful communication.
-
-🗣️ English and Marathi Processing
-
-The text-processing pipeline separates recognition from language correction.
-
-Example:
-
-Raw ISL gloss
-      ↓
-Recognized words
-      ↓
-Groq LLM
-      ↓
-Natural English sentence
-      ↓
-Marathi translation
-
-groq_helper.py sends the recognized ISL-style text to the Groq API and asks the model to correct word order and insert only necessary grammatical words.
-
-The backend then uses deep-translator for English-to-Marathi translation.
-
-If the Groq service is unavailable, the backend has a simple fallback for producing a readable English sentence.
-
-🔊 Text-to-Speech
-
-The frontend uses the browser's speech-synthesis functionality to read recognized output aloud.
-
-Both English and Marathi output can be spoken when a compatible browser voice is available.
-
-🔌 Important API Endpoints
-
-The FastAPI backend provides endpoints for authentication, recognition, translation, and dataset operations.
-
-Important routes include:
-
-GET  /api/health
-
-POST /api/auth/signup
-POST /api/auth/signin
-GET  /api/auth/me
-POST /api/auth/signout
-
-POST /api/predict
-POST /api/classify-landmarks
-POST /api/classify-browser-static
-
-POST /api/datasets/static
-
-The exact request and response structures are defined in:
-
-backend/main.py
-
-🧪 Testing and Debugging
-
-Check MediaPipe
-
-python src/predict.py
-
-The standalone OpenCV prediction script can be used for quick recognition testing without relying on the React interface.
-
-Check the API
-
-With FastAPI running, open:
-
-http://127.0.0.1:8000/api/health
-
-A successful response reports whether the primary model is available.
-
-🛠️ Troubleshooting
-
-Model is unavailable
-
-Make sure the required trained model exists:
-
-models/model.pkl
-
-If it does not exist, train the model:
-
-python src/train.py
-
-MediaPipe installation problems
-
-Use a compatible Python version, preferably Python 3.10 for this project.
-
-Then recreate the virtual environment and reinstall:
-
+```bash
 pip install -r requirements.txt
+```
 
-Camera does not start
+Configure the required environment variables and start the backend using the actual FastAPI entry point.
 
-Check that:
+For example, if the entry point is `main.py` and the application object is named `app`:
 
-Your browser has camera permission.
+```bash
+uvicorn main:app --reload
+```
 
-No other application is using the webcam.
+Adjust the command if the entry point or application object has a different name.
 
-You are accessing the application through the Vite development server.
+### 4. Run and Verify
 
-The correct camera is selected if multiple cameras are available.
+- Open the frontend in your browser.
+- Sign in or create an account if authentication is enabled.
+- Allow camera access when prompted.
+- Present a sign supported by the model.
+- Check the recognized output.
+- Finalize a message and test English and Marathi translation.
 
-Groq translation/correction does not work
+---
 
-Check that .env contains:
+## Environment Variables
 
-GROQ_API_KEY=your_groq_api_key_here
+Create a `.env` file in the location expected by the backend. Never commit actual API keys or secrets to GitHub.
 
-Then restart the FastAPI server.
+Example template:
 
-Frontend dependencies are missing
+```env
+GROQ_API_KEY=your_groq_api_key
+GOOGLE_TRANSLATE_API_KEY=your_translation_api_key
+JWT_SECRET_KEY=replace_with_a_secure_secret
+```
 
-Run:
+These names are examples. Use the exact variable names expected by your code. The Google Translate configuration depends on the service or library used.
 
-cd frontend
-npm install
-npm run dev
+Add `.env` to `.gitignore`. Commit an `.env.example` file containing placeholder values instead of credentials.
 
-🔒 Security Notes
+---
 
-Never commit .env.
+## API Documentation
 
-Never publish your Groq API key.
+The project architecture includes a FastAPI backend for health checks, landmark classification, and finalized-message translation. Confirm the current route definitions and request schemas in the source code.
 
-User passwords are stored as PBKDF2-HMAC-SHA256 hashes rather than plain text.
+- `GET /api/health` — Check backend health.
+- `POST /api/classify-browser-static` — Static classification through the browser-oriented flow.
+- `POST /api/classify-landmarks` — Classification using landmark data.
+- `POST /api/translate` — Process a finalized message through the translation pipeline.
 
-Session tokens are stored in hashed form in the SQLite database.
+The real-time ONNX inference pipeline is designed to run in the browser, so not every recognition step necessarily requires a backend request.
 
-The development CORS configuration is limited to the local Vite development addresses.
+If interactive API documentation is enabled, it is commonly available at `/docs` on the running FastAPI server.
 
-For production deployment, configure HTTPS, secure cookies/tokens, CORS, database storage, and secret management appropriately.
+---
 
-📦 Main Dependencies
+## Sample Data
 
-Python
+Sample data demonstrates the kinds of inputs supported by the recognition pipeline.
 
-opencv-python
-mediapipe
-numpy
-pandas
-scikit-learn
-joblib
-groq
-python-dotenv
-transformers
-torch
-deep-translator
-fastapi
-uvicorn
-python-multipart
-onnx
-skl2onnx
+Include the following where available:
 
-Frontend
+- Static sign images or landmark samples with correct labels.
+- Dynamic sign sequences containing frame or landmark data.
+- A label mapping file linking sample identifiers to expected signs.
+- Instructions explaining the sample format.
 
-react
-react-dom
-vite
-@vitejs/plugin-react
-@mediapipe/tasks-vision
-onnxruntime-web
+Example CSV:
 
-🚧 Project Status
+```csv
+sample_id,sign_type,label
+S001,static,A
+S002,static,B
+D001,dynamic,HELLO
+D002,dynamic,THANK_YOU
+```
 
-S-स्पर्श currently combines a working React learning/translation interface with Python/FastAPI recognition services and separate static/dynamic model-development pipelines.
+These are illustrative examples. Replace them with actual labels supported by the trained models.
 
-The static sign-recognition pipeline is intended for reliable sign classification, while the dynamic LSTM pipeline is maintained as a separate experimental/model-validation path until its browser inference integration is completed.
+Do not upload private, restricted, or unlicensed training data.
 
-🎯 Future Scope
+---
 
-Possible future improvements include:
+## Test Cases
 
-Expanding the ISL vocabulary
+The following test cases can be used to evaluate the main workflows.
 
-Improving recognition accuracy with larger and more diverse datasets
+### TC01 — Static Sign Recognition
+Input: A supported static sign.
 
-Adding more dynamic signs
+Expected result: The model returns the expected sign label.
 
-Integrating validated LSTM/ONNX dynamic recognition directly into the live translator
+### TC02 — Dynamic Sign Recognition
+Input: A supported motion-based sign.
 
-Improving sentence-level context handling
+Expected result: The dynamic model identifies the supported sign.
 
-Supporting additional Indian languages
+### TC03 — No Hand Detected
+Input: Camera feed without a detectable hand.
 
-Adding richer progress analytics
+Expected result: The system avoids reporting an unsupported sign as a confident prediction.
 
-Improving accessibility and mobile support
+### TC04 — Sentence Formation
+Input: A sequence of supported signs.
 
-Deploying the application for public use
+Expected result: The conversation engine updates the message appropriately.
 
-👩‍💻 Development
+### TC05 — English Message Generation
+Input: A finalized ISL gloss sequence.
 
-Frontend:
+Expected result: The translation pipeline attempts to generate grammatical English.
 
-cd frontend
-npm run dev
+### TC06 — Marathi Translation
+Input: An English message.
 
-Production frontend build:
+Expected result: Marathi translation is displayed when the translation service succeeds.
 
-npm run build
+### TC07 — Camera Permission
+Input: Camera access is denied.
 
-Preview the production build:
+Expected result: The application handles the unavailable camera appropriately.
 
-npm run preview
+### TC08 — Translation Service Failure
+Input: Translation service unavailable or returns an error.
 
-Backend:
+Expected result: The application handles the error without crashing.
 
-uvicorn backend.main:app --reload --port 8000
+Record actual outcomes when these tests are executed. Do not mark a test as passed without verifying it.
 
-📄 License
+---
 
-Add the project's chosen license here before publishing the repository publicly.
+## Evaluation Metrics
 
-❤️ About S-स्पर्श
+SPARSH can be evaluated using the following key performance indicators:
 
-S-स्पर्श is designed around the idea that technology can make communication and ISL learning more accessible.
+- Recognition accuracy: Percentage of evaluated signs classified correctly.
+- Response time: Time taken to recognize and display a result.
+- Translation quality: Whether the translated message preserves the intended meaning.
+- Recognition stability: Whether the system avoids excessive duplicate or fluctuating predictions.
+- User engagement: Participation in learning and practice activities.
 
-Learn. Practise. Sign. Connect.
+Actual metrics should be measured and reported using recorded test results.
+
+---
+
+## Future Scope
+
+Potential improvements include:
+
+- Expanding the supported ISL vocabulary.
+- Improving recognition under varied lighting and camera conditions.
+- Enhancing continuous signing and sentence-level translation.
+- Exploring voice-to-sign communication.
+- Adding personalized learning progress and feedback.
+- Evaluating usability with Deaf and Hard-of-Hearing users.
+- Extending accessibility support to educational institutions and public services.
+
+These are future possibilities rather than claims about existing functionality.
+
+---
+
+## Impact and SDG Alignment
+
+SPARSH aims to promote accessible and inclusive communication.
+
+- SDG 10 — Reduced Inequalities: Supports efforts to reduce communication barriers and promote inclusion.
+- SDG 4 — Quality Education: Encourages accessible Indian Sign Language learning and practice.
+- SDG 9 — Industry, Innovation and Infrastructure: Applies AI and machine learning to assistive technology.
+
+The intended impact is to improve ISL awareness, support accessible learning, and help bridge communication gaps between ISL users and people unfamiliar with the language.
+
+---
+
+## Contributors
+
+Developed by Team Charlie's Engineers
+
+- Anagha Kadam
+- Shalmalee Deshmukh
+- Lavanya Nimbalkar
+
+Institution: Bharati Vidyapeeth's College of Engineering for Women, Pune, India.
+
+---
+
+## Acknowledgements
+
+SPARSH uses open-source technologies including React, Vite, MediaPipe, scikit-learn, PyTorch, ONNX, and FastAPI, alongside the language-processing and translation services configured for the project.
+
+---
+
+S-स्पर्श (SPARSH) — Making communication more accessible, one sign at a time.
