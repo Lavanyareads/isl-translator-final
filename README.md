@@ -401,80 +401,11 @@ If interactive API documentation is enabled, it is commonly available at `/docs`
 
 ---
 
-## Sample Data
+## Sample Data and Test Cases
 
-Sample data demonstrates the kinds of inputs supported by the recognition pipeline.
-
-Include the following where available:
-
-- Static sign images or landmark samples with correct labels.
-- Dynamic sign sequences containing frame or landmark data.
-- A label mapping file linking sample identifiers to expected signs.
-- Instructions explaining the sample format.
-
-Example CSV:
-
-```csv
-sample_id,sign_type,label
-S001,static,A
-S002,static,B
-D001,dynamic,HELLO
-D002,dynamic,THANK_YOU
-```
-
-These are illustrative examples. Replace them with actual labels supported by the trained models.
-
-Do not upload private, restricted, or unlicensed training data.
-
----
-
-## Test Cases
-
-The following test cases can be used to evaluate the main workflows.
-
-### TC01 — Static Sign Recognition
-Input: A supported static sign.
-
-Expected result: The model returns the expected sign label.
-
-### TC02 — Dynamic Sign Recognition
-Input: A supported motion-based sign.
-
-Expected result: The dynamic model identifies the supported sign.
-
-### TC03 — No Hand Detected
-Input: Camera feed without a detectable hand.
-
-Expected result: The system avoids reporting an unsupported sign as a confident prediction.
-
-### TC04 — Sentence Formation
-Input: A sequence of supported signs.
-
-Expected result: The conversation engine updates the message appropriately.
-
-### TC05 — English Message Generation
-Input: A finalized ISL gloss sequence.
-
-Expected result: The translation pipeline attempts to generate grammatical English.
-
-### TC06 — Marathi Translation
-Input: An English message.
-
-Expected result: Marathi translation is displayed when the translation service succeeds.
-
-### TC07 — Camera Permission
-Input: Camera access is denied.
-
-Expected result: The application handles the unavailable camera appropriately.
-
-### TC08 — Translation Service Failure
-Input: Translation service unavailable or returns an error.
-
-Expected result: The application handles the error without crashing.
-
-Record actual outcomes when these tests are executed. Do not mark a test as passed without verifying it.
-
----
+- [Static Sign Samples](sample_data/static_samples.csv)
+- [Dynamic Sign Samples](sample_data/dynamic_samples.csv)
+- [Test Cases](test_cases/test_cases.md)
 
 ## Evaluation Metrics
 
