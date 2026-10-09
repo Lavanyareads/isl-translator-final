@@ -1,0 +1,16 @@
+sample_id,sign_type,label
+D001,dynamic,ATE
+D002,dynamic,EXCITED
+D003,dynamic,GOODMORNING
+D004,dynamic,HAPPY
+D005,dynamic,HELLO
+D006,dynamic,HOW_ARE_YOU
+D007,dynamic,IDLE
+D008,dynamic,INDIAN
+D009,dynamic,ISL
+D010,dynamic,LOVE_IT
+D011,dynamic,PICTURE
+D012,dynamic,THANK_YOU
+D013,dynamic,THANKYOU
+D014,dynamic,UNDERSTAND
+D015,dynamic,WHAT
